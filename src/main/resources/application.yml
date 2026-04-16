@@ -1,24 +1,36 @@
 server:
   port: 8081
+
 spring:
   application:
     name: cclg.dianping
+
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://127.0.0.1:3306/cclg.dianping?useSSL=false&serverTimezone=UTC
+    url: jdbc:mysql://127.0.0.1:3306/cclg.dianping?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
     username: root
     password: 123456
+
   jackson:
-    default-property-inclusion: non_null # JSON?????????
+    default-property-inclusion: non_null
+
   data:
     redis:
       host: 127.0.0.1
       port: 6379
       password: 123456
       database: 0
-      timeout: 10s
+      timeout: 10000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-wait: -1ms
+          max-idle: 8
+          min-idle: 0
+
 mybatis-plus:
-  type-aliases-package: com.cclg.dianping.domain # ?????
+  type-aliases-package: com.cclg.dianping.domain
+
 logging:
   level:
     com.cclg.dianping: debug
