@@ -6,13 +6,16 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.cclg.dianping.constant.ShopConstants;
 import com.cclg.dianping.domain.Shop;
+import com.cclg.dianping.domain.ShopType;
 import com.cclg.dianping.dto.Result;
 import com.cclg.dianping.mapper.ShopMapper;
 import com.cclg.dianping.service.IShopService;
+import com.cclg.dianping.service.IShopTypeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -25,6 +28,9 @@ import java.util.List;
 @Slf4j
 @Service
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
+
+    @Resource
+    private IShopTypeService shopTypeService;
 
     /**
      * 新增商铺
@@ -149,6 +155,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.fail(ShopConstants.SHOP_NOT_EXIST);
         }
 
+        // ========== 4. 关联查询商铺类型 ==========
+        setShopType(shop);
+
         return Result.ok(shop);
     }
 
@@ -195,6 +204,11 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
         // ========== 4. 执行分页查询 ==========
         page(page, queryWrapper);
+
+        // ========== 5. 关联查询商铺类型 ==========
+        for (Shop shop : page.getRecords()) {
+            setShopType(shop);
+        }
 
         return Result.ok(page.getRecords(), page.getTotal());
     }
@@ -271,6 +285,18 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
 
         return Result.fail(ShopConstants.SHOP_BATCH_DELETE_FAIL);
+    }
+
+    /**
+     * 为商铺设置关联的商铺类型信息
+     *
+     * @param shop 商铺对象
+     */
+    private void setShopType(Shop shop) {
+        if (shop.getTypeId() != null) {
+            ShopType shopType = shopTypeService.getById(shop.getTypeId());
+            shop.setShopType(shopType);
+        }
     }
 
     /**
