@@ -38,8 +38,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      * 1. 校验商铺信息不能为空
      * 2. 校验商铺名称不能为空
      * 3. 校验商铺名称是否已存在
-     * 4. 设置创建时间和更新时间
-     * 5. 保存商铺信息
+     * 4. 校验商铺类型是否存在（如果传入了typeId）
+     * 5. 设置创建时间和更新时间
+     * 6. 保存商铺信息
      *
      * @param shop 商铺信息
      * @return 操作结果，成功返回商铺ID
@@ -62,13 +63,19 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.fail(ShopConstants.SHOP_NAME_EXIST);
         }
 
-        // ========== 4. 设置创建时间和更新时间 ==========
+        // ========== 4. 校验商铺类型是否存在 ==========
+        // 如果传入了typeId，则校验该类型是否存在
+        if (shop.getTypeId() != null && !checkShopTypeExist(shop.getTypeId())) {
+            return Result.fail(ShopConstants.SHOP_TYPE_NOT_EXIST);
+        }
+
+        // ========== 5. 设置创建时间和更新时间 ==========
         // 使用统一的时间变量，保证创建时间和更新时间一致
         LocalDateTime now = LocalDateTime.now();
         shop.setCreateTime(now);
         shop.setUpdateTime(now);
 
-        // ========== 5. 保存商铺信息 ==========
+        // ========== 6. 保存商铺信息 ==========
         boolean success = save(shop);
         if (success) {
             log.info(ShopConstants.SHOP_CREATE_SUCCESS, shop.getId());
@@ -85,8 +92,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      * 2. 校验商铺是否存在
      * 3. 校验商铺名称不能是空串（如果传入了名称）
      * 4. 校验商铺名称是否已存在（排除自身）
-     * 5. 设置更新时间
-     * 6. 更新商铺信息
+     * 5. 校验商铺类型是否存在（如果传入了typeId）
+     * 6. 设置更新时间
+     * 7. 更新商铺信息
      *
      * @param shop 商铺信息
      * @return 操作结果
@@ -117,10 +125,16 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.fail(ShopConstants.SHOP_NAME_EXIST);
         }
 
-        // ========== 5. 设置更新时间 ==========
+        // ========== 5. 校验商铺类型是否存在 ==========
+        // 如果传入了typeId，则校验该类型是否存在
+        if (shop.getTypeId() != null && !checkShopTypeExist(shop.getTypeId())) {
+            return Result.fail(ShopConstants.SHOP_TYPE_NOT_EXIST);
+        }
+
+        // ========== 6. 设置更新时间 ==========
         shop.setUpdateTime(LocalDateTime.now());
 
-        // ========== 6. 更新商铺信息 ==========
+        // ========== 7. 更新商铺信息 ==========
         boolean success = updateById(shop);
         if (success) {
             log.info(ShopConstants.SHOP_UPDATE_SUCCESS, shop.getId());
@@ -318,5 +332,19 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
         // 统计符合条件的记录数，大于0表示已存在
         return count(queryWrapper) > 0;
+    }
+
+    /**
+     * 检查商铺类型是否存在
+     *
+     * @param typeId 商铺类型ID
+     * @return true-存在，false-不存在
+     */
+    private boolean checkShopTypeExist(Long typeId) {
+        if (typeId == null) {
+            return false;
+        }
+        ShopType shopType = shopTypeService.getById(typeId);
+        return shopType != null;
     }
 }
