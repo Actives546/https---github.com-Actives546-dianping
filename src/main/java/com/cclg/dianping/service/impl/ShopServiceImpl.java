@@ -35,22 +35,22 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result saveShop(Shop shop) {
-        // 校验商铺信息不能为空
         if (shop == null) {
             return Result.fail(ShopConstants.SHOP_INFO_NOT_NULL);
         }
 
-        // 校验商铺名称不能为空
         if (StrUtil.isBlank(shop.getName())) {
             return Result.fail(ShopConstants.SHOP_NAME_NOT_NULL);
         }
 
-        // 使用统一的时间变量设置创建时间和更新时间，保证时间一致性
+        if (checkShopNameExist(shop.getName(), null)) {
+            return Result.fail(ShopConstants.SHOP_NAME_EXIST);
+        }
+
         LocalDateTime now = LocalDateTime.now();
         shop.setCreateTime(now);
         shop.setUpdateTime(now);
 
-        // 保存商铺信息
         boolean success = save(shop);
         if (success) {
             log.info(ShopConstants.SHOP_CREATE_SUCCESS, shop.getId());
@@ -69,21 +69,21 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result updateShop(Shop shop) {
-        // 校验商铺ID不能为空
         if (shop == null || shop.getId() == null) {
             return Result.fail(ShopConstants.SHOP_ID_NOT_NULL);
         }
 
-        // 校验商铺是否存在
         Shop existShop = getById(shop.getId());
         if (existShop == null) {
             return Result.fail(ShopConstants.SHOP_NOT_EXIST);
         }
 
-        // 设置更新时间
+        if (StrUtil.isNotBlank(shop.getName()) && checkShopNameExist(shop.getName(), shop.getId())) {
+            return Result.fail(ShopConstants.SHOP_NAME_EXIST);
+        }
+
         shop.setUpdateTime(LocalDateTime.now());
 
-        // 更新商铺信息
         boolean success = updateById(shop);
         if (success) {
             log.info(ShopConstants.SHOP_UPDATE_SUCCESS, shop.getId());
@@ -101,12 +101,10 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      */
     @Override
     public Result getShopById(Long id) {
-        // 校验商铺ID不能为空
         if (id == null) {
             return Result.fail(ShopConstants.SHOP_ID_NOT_NULL);
         }
 
-        // 根据ID查询商铺
         Shop shop = getById(id);
         if (shop == null) {
             return Result.fail(ShopConstants.SHOP_NOT_EXIST);
@@ -126,32 +124,28 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      */
     @Override
     public Result queryShopPage(Integer current, Integer size, String name) {
-        // 处理默认分页参数
         if (current == null || current <= 0) {
             current = ShopConstants.DEFAULT_PAGE_CURRENT;
         }
+
         if (size == null || size <= 0) {
             size = ShopConstants.DEFAULT_PAGE_SIZE;
+        } else if (size > ShopConstants.MAX_PAGE_SIZE) {
+            size = ShopConstants.MAX_PAGE_SIZE;
         }
 
-        // 创建分页对象
         Page<Shop> page = new Page<>(current, size);
 
-        // 构建查询条件
         LambdaQueryWrapper<Shop> queryWrapper = new LambdaQueryWrapper<>();
 
-        // 按商铺名称模糊筛选（如果有传入name参数）
         if (StrUtil.isNotBlank(name)) {
             queryWrapper.like(Shop::getName, name);
         }
 
-        // 按更新时间降序排序，确保最新的记录在前
         queryWrapper.orderByDesc(Shop::getUpdateTime);
 
-        // 执行分页查询
         page(page, queryWrapper);
 
-        // 返回分页结果，包含数据列表和总记录数
         return Result.ok(page.getRecords(), page.getTotal());
     }
 
@@ -164,18 +158,15 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result deleteShopById(Long id) {
-        // 校验商铺ID不能为空
         if (id == null) {
             return Result.fail(ShopConstants.SHOP_ID_NOT_NULL);
         }
 
-        // 校验商铺是否存在
         Shop shop = getById(id);
         if (shop == null) {
             return Result.fail(ShopConstants.SHOP_NOT_EXIST);
         }
 
-        // 执行删除操作
         boolean success = removeById(id);
         if (success) {
             log.info(ShopConstants.SHOP_DELETE_SUCCESS, id);
@@ -187,8 +178,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     /**
      * 批量删除商铺
-     * 注意：有一个删除失败则整体失败（事务回滚）
-     * 实现逻辑：逐个校验并删除，确保每个商铺都存在且删除成功
+     * 使用MyBatis-Plus的removeByIds方法进行批量删除
      *
      * @param ids 商铺ID列表
      * @return 操作结果
@@ -196,30 +186,34 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result deleteShopByIds(List<Long> ids) {
-        // 校验商铺ID列表不能为空
         if (ids == null || ids.isEmpty()) {
             return Result.fail(ShopConstants.SHOP_ID_LIST_NOT_NULL);
         }
 
-        // 逐个校验商铺是否存在，并执行删除
-        // 注意：使用事务注解，任何一个删除失败都会触发回滚
-        for (Long id : ids) {
-            // 校验商铺是否存在
-            Shop shop = getById(id);
-            if (shop == null) {
-                // 商铺不存在，直接返回失败（事务会回滚）
-                return Result.fail(ShopConstants.SHOP_NOT_EXIST + "，商铺ID：" + id);
-            }
-
-            // 执行删除
-            boolean success = removeById(id);
-            if (!success) {
-                // 删除失败，返回失败（事务会回滚）
-                return Result.fail(ShopConstants.SHOP_DELETE_FAIL + "，商铺ID：" + id);
-            }
+        boolean success = removeByIds(ids);
+        if (success) {
+            log.info(ShopConstants.SHOP_BATCH_DELETE_SUCCESS, ids.size());
+            return Result.ok();
         }
 
-        log.info(ShopConstants.SHOP_BATCH_DELETE_SUCCESS, ids.size());
-        return Result.ok();
+        return Result.fail(ShopConstants.SHOP_BATCH_DELETE_FAIL);
+    }
+
+    /**
+     * 检查商铺名称是否已存在
+     *
+     * @param shopName 商铺名称
+     * @param excludeId 需要排除的商铺ID（更新时使用，排除自身）
+     * @return true-已存在，false-不存在
+     */
+    private boolean checkShopNameExist(String shopName, Long excludeId) {
+        LambdaQueryWrapper<Shop> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(Shop::getName, shopName);
+
+        if (excludeId != null) {
+            queryWrapper.ne(Shop::getId, excludeId);
+        }
+
+        return count(queryWrapper) > 0;
     }
 }
