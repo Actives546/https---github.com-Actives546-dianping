@@ -1,5 +1,6 @@
 package com.cclg.dianping.controller;
 
+import com.cclg.dianping.constant.ShopConstants;
 import com.cclg.dianping.domain.Shop;
 import com.cclg.dianping.dto.Result;
 import com.cclg.dianping.service.IShopService;
@@ -31,7 +32,7 @@ public class ShopController {
      */
     @PostMapping
     public Result saveShop(@RequestBody Shop shop) {
-        log.info("新增商铺，商铺名称：{}", shop.getName());
+        log.info(ShopConstants.LOG_SAVE_SHOP, shop.getName());
         return shopService.saveShop(shop);
     }
 
@@ -43,7 +44,7 @@ public class ShopController {
      */
     @PutMapping
     public Result updateShop(@RequestBody Shop shop) {
-        log.info("更新商铺，商铺ID：{}", shop.getId());
+        log.info(ShopConstants.LOG_UPDATE_SHOP, shop.getId());
         return shopService.updateShop(shop);
     }
 
@@ -55,7 +56,7 @@ public class ShopController {
      */
     @GetMapping("/{id}")
     public Result getShopById(@PathVariable("id") Long id) {
-        log.info("根据ID查询商铺，商铺ID：{}", id);
+        log.info(ShopConstants.LOG_GET_SHOP, id);
         return shopService.getShopById(id);
     }
 
@@ -64,7 +65,7 @@ public class ShopController {
      * 支持按商铺名称模糊筛选
      *
      * @param current 当前页码，默认1
-     * @param size    每页大小，默认10
+     * @param size    每页大小，默认10，最大100
      * @param name    商铺名称（可选，模糊匹配）
      * @return 分页结果，包含数据列表和总记录数
      */
@@ -73,7 +74,7 @@ public class ShopController {
             @RequestParam(value = "current", defaultValue = "1") Integer current,
             @RequestParam(value = "size", defaultValue = "10") Integer size,
             @RequestParam(value = "name", required = false) String name) {
-        log.info("分页查询商铺，当前页：{}，每页大小：{}，商铺名称：{}", current, size, name);
+        log.info(ShopConstants.LOG_PAGE_QUERY, current, size, name);
         return shopService.queryShopPage(current, size, name);
     }
 
@@ -85,20 +86,20 @@ public class ShopController {
      */
     @DeleteMapping("/{id}")
     public Result deleteShopById(@PathVariable("id") Long id) {
-        log.info("删除商铺，商铺ID：{}", id);
+        log.info(ShopConstants.LOG_DELETE_SHOP, id);
         return shopService.deleteShopById(id);
     }
 
     /**
      * 批量删除商铺
-     * 注意：有一个删除失败则整体失败（事务回滚）
+     * 使用MyBatis-Plus的批量删除方法
      *
      * @param ids 商铺ID列表
      * @return 操作结果
      */
     @DeleteMapping("/batch")
     public Result deleteShopByIds(@RequestBody List<Long> ids) {
-        log.info("批量删除商铺，商铺数量：{}", ids.size());
+        log.info(ShopConstants.LOG_BATCH_DELETE_SHOP, ids.size());
         return shopService.deleteShopByIds(ids);
     }
 }
