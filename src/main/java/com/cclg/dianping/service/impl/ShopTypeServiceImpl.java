@@ -18,10 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.function.Function;
 
@@ -373,7 +370,7 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
      */
     private Set<Long> findAssociatedTypeIds(List<Long> typeIds) {
         if (typeIds == null || typeIds.isEmpty()) {
-            return Set.of();
+            return Collections.emptySet();
         }
 
         // 使用in查询一次性查询所有typeId
