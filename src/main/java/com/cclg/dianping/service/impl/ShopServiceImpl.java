@@ -18,7 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.function.Function;
 
 /**
  * 商铺服务实现类
@@ -220,10 +224,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         // ========== 4. 执行分页查询 ==========
         page(page, queryWrapper);
 
-        // ========== 5. 关联查询商铺类型 ==========
-        for (Shop shop : page.getRecords()) {
-            setShopType(shop);
-        }
+        // ========== 5. 批量关联查询商铺类型 ==========
+        // 使用批量查询替代循环单条查询，减少数据库访问次数
+        setShopTypeBatch(page.getRecords());
 
         return Result.ok(page.getRecords(), page.getTotal());
     }
@@ -302,7 +305,8 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     }
 
     /**
-     * 为商铺设置关联的商铺类型信息
+     * 为单个商铺设置关联的商铺类型信息
+     * 适用于单条查询的场景
      *
      * @param shop 商铺对象
      */
@@ -310,6 +314,42 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         if (shop.getTypeId() != null) {
             ShopType shopType = shopTypeService.getById(shop.getTypeId());
             shop.setShopType(shopType);
+        }
+    }
+
+    /**
+     * 批量为商铺列表设置关联的商铺类型信息
+     * 使用批量查询替代循环单条查询，减少数据库访问次数
+     *
+     * @param shops 商铺列表
+     */
+    private void setShopTypeBatch(List<Shop> shops) {
+        if (shops == null || shops.isEmpty()) {
+            return;
+        }
+
+        // ========== 1. 收集所有非空的typeId ==========
+        Set<Long> typeIds = shops.stream()
+                .map(Shop::getTypeId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+
+        if (typeIds.isEmpty()) {
+            return;
+        }
+
+        // ========== 2. 批量查询所有商铺类型 ==========
+        List<ShopType> shopTypes = shopTypeService.listByIds(typeIds);
+
+        // ========== 3. 转为Map，方便快速查找 ==========
+        Map<Long, ShopType> shopTypeMap = shopTypes.stream()
+                .collect(Collectors.toMap(ShopType::getId, Function.identity()));
+
+        // ========== 4. 为每个商铺设置关联的类型 ==========
+        for (Shop shop : shops) {
+            if (shop.getTypeId() != null) {
+                shop.setShopType(shopTypeMap.get(shop.getTypeId()));
+            }
         }
     }
 
