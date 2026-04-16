@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 商铺服务实现类
@@ -266,7 +267,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      * 批量删除商铺
      * 业务逻辑：
      * 1. 校验商铺ID列表不能为空
-     * 2. 逐个查询商铺是否存在（有一个不存在则整体失败）
+     * 2. 使用stream校验所有商铺是否存在
      * 3. 执行批量删除操作
      *
      * @param ids 商铺ID列表
@@ -280,14 +281,13 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.fail(ShopConstants.SHOP_ID_LIST_NOT_NULL);
         }
 
-        // ========== 2. 逐个查询商铺是否存在 ==========
-        // 批量删除前必须先查询确认每个商铺都存在
-        // 有一个不存在则整体失败，事务回滚
-        for (Long id : ids) {
-            Shop shop = getById(id);
-            if (shop == null) {
-                return Result.fail(ShopConstants.SHOP_NOT_EXIST + "，商铺ID：" + id);
-            }
+        // ========== 2. 使用stream校验所有商铺是否存在 ==========
+        // 找到第一个不存在的商铺ID
+        Optional<Long> nonExistId = ids.stream()
+                .filter(id -> getById(id) == null)
+                .findFirst();
+        if (nonExistId.isPresent()) {
+            return Result.fail(ShopConstants.SHOP_NOT_EXIST + "，商铺ID：" + nonExistId.get());
         }
 
         // ========== 3. 执行批量删除操作 ==========

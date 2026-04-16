@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.cclg.dianping.constant.ShopConstants;
 import com.cclg.dianping.constant.ShopTypeConstants;
 import com.cclg.dianping.domain.Shop;
 import com.cclg.dianping.domain.ShopType;
@@ -18,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 商铺类型服务实现类
@@ -181,14 +183,14 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
     public Result queryShopTypePage(Integer current, Integer size, String name) {
         // ========== 1. 处理默认分页参数 ==========
         if (current == null || current <= 0) {
-            current = com.cclg.dianping.constant.ShopConstants.DEFAULT_PAGE_CURRENT;
+            current = ShopConstants.DEFAULT_PAGE_CURRENT;
         }
 
         // ========== 2. 限制最大分页数 ==========
         if (size == null || size <= 0) {
-            size = com.cclg.dianping.constant.ShopConstants.DEFAULT_PAGE_SIZE;
-        } else if (size > com.cclg.dianping.constant.ShopConstants.MAX_PAGE_SIZE) {
-            size = com.cclg.dianping.constant.ShopConstants.MAX_PAGE_SIZE;
+            size = ShopConstants.DEFAULT_PAGE_SIZE;
+        } else if (size > ShopConstants.MAX_PAGE_SIZE) {
+            size = ShopConstants.MAX_PAGE_SIZE;
         }
 
         // ========== 3. 构建查询条件 ==========
@@ -254,8 +256,8 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
      * 批量删除商铺类型
      * 业务逻辑：
      * 1. 校验商铺类型ID列表不能为空
-     * 2. 逐个查询商铺类型是否存在
-     * 3. 逐个校验是否有关联的商铺
+     * 2. 使用stream校验所有商铺类型是否存在
+     * 3. 使用stream校验是否有关联的商铺
      * 4. 执行批量删除操作
      *
      * @param ids 商铺类型ID列表
@@ -269,21 +271,22 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
             return Result.fail(ShopTypeConstants.SHOP_TYPE_ID_LIST_NOT_NULL);
         }
 
-        // ========== 2. 逐个查询商铺类型是否存在 ==========
-        // 批量删除前必须先查询确认每个商铺类型都存在
-        for (Long id : ids) {
-            ShopType shopType = getById(id);
-            if (shopType == null) {
-                return Result.fail(ShopTypeConstants.SHOP_TYPE_NOT_EXIST + "，商铺类型ID：" + id);
-            }
+        // ========== 2. 使用stream校验所有商铺类型是否存在 ==========
+        // 找到第一个不存在的类型ID
+        Optional<Long> nonExistId = ids.stream()
+                .filter(id -> getById(id) == null)
+                .findFirst();
+        if (nonExistId.isPresent()) {
+            return Result.fail(ShopTypeConstants.SHOP_TYPE_NOT_EXIST + "，商铺类型ID：" + nonExistId.get());
         }
 
-        // ========== 3. 逐个校验是否有关联的商铺 ==========
-        // 有一个类型存在关联商铺则整体失败，事务回滚
-        for (Long id : ids) {
-            if (hasAssociatedShop(id)) {
-                return Result.fail(ShopTypeConstants.SHOP_TYPE_HAS_ASSOCIATED_SHOP + "，商铺类型ID：" + id);
-            }
+        // ========== 3. 使用stream校验是否有关联的商铺 ==========
+        // 找到第一个有关联商铺的类型ID
+        Optional<Long> associatedId = ids.stream()
+                .filter(this::hasAssociatedShop)
+                .findFirst();
+        if (associatedId.isPresent()) {
+            return Result.fail(ShopTypeConstants.SHOP_TYPE_HAS_ASSOCIATED_SHOP + "，商铺类型ID：" + associatedId.get());
         }
 
         // ========== 4. 执行批量删除操作 ==========
