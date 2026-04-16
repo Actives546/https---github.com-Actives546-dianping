@@ -19,7 +19,11 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.function.Function;
 
 /**
  * 商铺类型服务实现类
@@ -256,8 +260,8 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
      * 批量删除商铺类型
      * 业务逻辑：
      * 1. 校验商铺类型ID列表不能为空
-     * 2. 使用stream校验所有商铺类型是否存在
-     * 3. 使用stream校验是否有关联的商铺
+     * 2. 批量查询所有商铺类型，校验是否存在
+     * 3. 批量查询关联的商铺，校验是否有关联
      * 4. 执行批量删除操作
      *
      * @param ids 商铺类型ID列表
@@ -271,19 +275,28 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
             return Result.fail(ShopTypeConstants.SHOP_TYPE_ID_LIST_NOT_NULL);
         }
 
-        // ========== 2. 使用stream校验所有商铺类型是否存在 ==========
-        // 找到第一个不存在的类型ID
+        // ========== 2. 批量查询所有商铺类型，校验是否存在 ==========
+        // 使用listByIds一次性查询所有类型，替代循环单条查询
+        List<ShopType> existShopTypes = listByIds(ids);
+        Set<Long> existIds = existShopTypes.stream()
+                .map(ShopType::getId)
+                .collect(Collectors.toSet());
+
+        // 找出不存在的ID
         Optional<Long> nonExistId = ids.stream()
-                .filter(id -> getById(id) == null)
+                .filter(id -> !existIds.contains(id))
                 .findFirst();
         if (nonExistId.isPresent()) {
             return Result.fail(ShopTypeConstants.SHOP_TYPE_NOT_EXIST + "，商铺类型ID：" + nonExistId.get());
         }
 
-        // ========== 3. 使用stream校验是否有关联的商铺 ==========
-        // 找到第一个有关联商铺的类型ID
+        // ========== 3. 批量查询关联的商铺，校验是否有关联 ==========
+        // 使用in查询一次性查询所有typeId的关联商铺
+        Set<Long> associatedTypeIds = findAssociatedTypeIds(ids);
+
+        // 找出有关联商铺的类型ID
         Optional<Long> associatedId = ids.stream()
-                .filter(this::hasAssociatedShop)
+                .filter(associatedTypeIds::contains)
                 .findFirst();
         if (associatedId.isPresent()) {
             return Result.fail(ShopTypeConstants.SHOP_TYPE_HAS_ASSOCIATED_SHOP + "，商铺类型ID：" + associatedId.get());
@@ -336,6 +349,7 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
 
     /**
      * 检查是否有商铺关联该类型
+     * 适用于单条查询的场景
      *
      * @param typeId 商铺类型ID
      * @return true-有关联商铺，false-无关联商铺
@@ -348,5 +362,32 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
         queryWrapper.eq(Shop::getTypeId, typeId);
         // 统计符合条件的商铺数量，大于0表示有关联商铺
         return shopMapper.selectCount(queryWrapper) > 0;
+    }
+
+    /**
+     * 批量查询关联商铺的类型ID
+     * 使用in查询一次性查询所有typeId，替代循环单条查询
+     *
+     * @param typeIds 商铺类型ID列表
+     * @return 有关联商铺的类型ID集合
+     */
+    private Set<Long> findAssociatedTypeIds(List<Long> typeIds) {
+        if (typeIds == null || typeIds.isEmpty()) {
+            return Set.of();
+        }
+
+        // 使用in查询一次性查询所有typeId
+        LambdaQueryWrapper<Shop> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.in(Shop::getTypeId, typeIds);
+        // 只查询typeId字段，提高查询效率
+        queryWrapper.select(Shop::getTypeId);
+        // 去重，只获取不同的typeId
+        queryWrapper.groupBy(Shop::getTypeId);
+
+        List<Shop> shops = shopMapper.selectList(queryWrapper);
+
+        return shops.stream()
+                .map(Shop::getTypeId)
+                .collect(Collectors.toSet());
     }
 }

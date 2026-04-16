@@ -270,7 +270,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      * 批量删除商铺
      * 业务逻辑：
      * 1. 校验商铺ID列表不能为空
-     * 2. 使用stream校验所有商铺是否存在
+     * 2. 批量查询所有商铺，校验是否存在
      * 3. 执行批量删除操作
      *
      * @param ids 商铺ID列表
@@ -284,10 +284,16 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.fail(ShopConstants.SHOP_ID_LIST_NOT_NULL);
         }
 
-        // ========== 2. 使用stream校验所有商铺是否存在 ==========
-        // 找到第一个不存在的商铺ID
+        // ========== 2. 批量查询所有商铺，校验是否存在 ==========
+        // 使用listByIds一次性查询所有商铺，替代循环单条查询
+        List<Shop> existShops = listByIds(ids);
+        Set<Long> existIds = existShops.stream()
+                .map(Shop::getId)
+                .collect(Collectors.toSet());
+
+        // 找出不存在的ID
         Optional<Long> nonExistId = ids.stream()
-                .filter(id -> getById(id) == null)
+                .filter(id -> !existIds.contains(id))
                 .findFirst();
         if (nonExistId.isPresent()) {
             return Result.fail(ShopConstants.SHOP_NOT_EXIST + "，商铺ID：" + nonExistId.get());
