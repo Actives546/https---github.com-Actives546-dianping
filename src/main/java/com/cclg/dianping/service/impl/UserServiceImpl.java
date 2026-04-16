@@ -33,73 +33,76 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result sendCode(String phone) {
-        // 生成6位随机数字验证码
+        // ========== 1. 生成验证码 ==========
         String code = RandomUtil.randomNumbers(6);
-        // 将验证码存入Redis，key为login:code:{phone}
+
+        // ========== 2. 保存验证码到Redis ==========
+        String key = LOGIN_CODE_KEY + phone;
         stringRedisTemplate.opsForValue().set(
-                LOGIN_CODE_KEY + phone,
+                key,
                 code,
                 LOGIN_CODE_TTL,
                 TimeUnit.MINUTES
         );
-        // 日志记录发送的验证码
-        log.debug("发送短信验证码成功，验证码：{}", code);
-        // 返回验证码给前端
+
+        // ========== 3. 记录日志并返回 ==========
+        log.debug("发送短信验证码成功，手机号：{}，验证码：{}", phone, code);
         return Result.ok(code);
     }
 
     @Override
     public Result login(LoginFormDTO loginForm) {
-        // 从登录表单中获取手机号
+        // ========== 1. 获取参数 ==========
         String phone = loginForm.getPhone();
-        // 从Redis中获取该手机号对应的验证码
-        String cacheCode = stringRedisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
-        // 从登录表单中获取用户输入的验证码
         String code = loginForm.getCode();
-        // 校验验证码是否正确
+
+        // ========== 2. 校验验证码 ==========
+        String cacheCode = stringRedisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
         if (cacheCode == null || !cacheCode.equals(code)) {
-            // 验证码错误，返回错误信息
             return Result.fail("验证码错误");
         }
-        // 根据手机号查询用户信息
+
+        // ========== 3. 查询或创建用户 ==========
         User user = query().eq("phone", phone).one();
-        // 判断用户是否存在
         if (user == null) {
-            // 用户不存在，创建新用户
             user = createUserWithPhone(phone);
         }
-        // 生成唯一的UUID作为登录token
+
+        // ========== 4. 生成并保存Token ==========
         String token = UUID.randomUUID().toString(true);
-        // 将用户对象转换为Map，以便存入Redis的Hash结构
-        Map<String, Object> userMap = BeanUtil.beanToMap(user, new HashMap<>(),
+
+        Map<String, Object> userMap = BeanUtil.beanToMap(
+                user,
+                new HashMap<>(),
                 CopyOptions.create()
                         .setIgnoreNullValue(true)
-                        .setFieldValueEditor((fieldName, fieldValue) -> fieldValue.toString()));
-        // 拼接token在Redis中的key，格式为login:token:{token}
+                        .setFieldValueEditor((fieldName, fieldValue) -> fieldValue.toString())
+        );
+
         String tokenKey = LOGIN_USER_KEY + token;
-        // 将用户信息存入Redis的Hash结构
         stringRedisTemplate.opsForHash().putAll(tokenKey, userMap);
-        // 设置token的过期时间
         stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL, TimeUnit.MINUTES);
-        // 返回token给前端
+
+        // ========== 5. 返回Token ==========
         return Result.ok(token);
     }
 
     /**
      * 根据手机号创建新用户
+     *
      * @param phone 手机号
      * @return 创建的用户对象
      */
     private User createUserWithPhone(String phone) {
-        // 创建新用户对象
+        // ========== 1. 创建用户对象 ==========
         User user = new User();
-        // 设置用户手机号
+
+        // ========== 2. 设置用户属性 ==========
         user.setPhone(phone);
-        // 设置随机昵称，格式为user_ + 10位随机字符串
         user.setNickName("user_" + RandomUtil.randomString(10));
-        // 将用户保存到数据库
+
+        // ========== 3. 保存并返回 ==========
         save(user);
-        // 返回创建的用户对象
         return user;
     }
 }
