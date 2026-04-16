@@ -12,6 +12,7 @@ public final class ShopTypeConstants {
     public static final String SHOP_TYPE_NOT_EXIST = "商铺类型不存在";
     public static final String SHOP_TYPE_ID_LIST_NOT_NULL = "商铺类型ID列表不能为空";
     public static final String SHOP_TYPE_NAME_EXIST = "商铺类型名称已存在";
+    public static final String SHOP_TYPE_HAS_ASSOCIATED_SHOP = "该类型下存在关联商铺，无法删除";
 
     public static final String SHOP_TYPE_CREATE_SUCCESS = "商铺类型创建成功，类型ID：{}";
     public static final String SHOP_TYPE_CREATE_FAIL = "商铺类型创建失败";
