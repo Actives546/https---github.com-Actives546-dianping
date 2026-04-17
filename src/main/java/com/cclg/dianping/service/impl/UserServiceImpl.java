@@ -4,20 +4,32 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
+import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.cclg.dianping.constant.UserConstants;
 import com.cclg.dianping.domain.User;
 import com.cclg.dianping.dto.LoginFormDTO;
 import com.cclg.dianping.dto.Result;
+import com.cclg.dianping.dto.UserDTO;
 import com.cclg.dianping.mapper.UserMapper;
 import com.cclg.dianping.service.IUserService;
+import com.cclg.dianping.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
+import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static com.cclg.dianping.utils.RedisConstants.LOGIN_CODE_KEY;
 import static com.cclg.dianping.utils.RedisConstants.LOGIN_CODE_TTL;
@@ -33,10 +45,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result sendCode(String phone) {
-        // ========== 1. 生成验证码 ==========
         String code = RandomUtil.randomNumbers(6);
-
-        // ========== 2. 保存验证码到Redis ==========
         String key = LOGIN_CODE_KEY + phone;
         stringRedisTemplate.opsForValue().set(
                 key,
@@ -44,31 +53,36 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                 LOGIN_CODE_TTL,
                 TimeUnit.MINUTES
         );
-
-        // ========== 3. 记录日志并返回 ==========
         log.debug("发送短信验证码成功，手机号：{}，验证码：{}", phone, code);
         return Result.ok(code);
     }
 
     @Override
     public Result login(LoginFormDTO loginForm) {
-        // ========== 1. 获取参数 ==========
         String phone = loginForm.getPhone();
         String code = loginForm.getCode();
+        String password = loginForm.getPassword();
 
-        // ========== 2. 校验验证码 ==========
-        String cacheCode = stringRedisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
-        if (cacheCode == null || !cacheCode.equals(code)) {
-            return Result.fail("验证码错误");
+        User user;
+
+        if (StrUtil.isNotBlank(code)) {
+            String cacheCode = stringRedisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
+            if (cacheCode == null || !cacheCode.equals(code)) {
+                return Result.fail(UserConstants.CODE_INVALID);
+            }
+            user = query().eq("phone", phone).one();
+            if (user == null) {
+                user = createUserWithPhone(phone);
+            }
+        } else if (StrUtil.isNotBlank(password)) {
+            user = query().eq("phone", phone).eq("password", password).one();
+            if (user == null) {
+                return Result.fail("手机号或密码错误");
+            }
+        } else {
+            return Result.fail("请提供验证码或密码");
         }
 
-        // ========== 3. 查询或创建用户 ==========
-        User user = query().eq("phone", phone).one();
-        if (user == null) {
-            user = createUserWithPhone(phone);
-        }
-
-        // ========== 4. 生成并保存Token ==========
         String token = UUID.randomUUID().toString(true);
 
         Map<String, Object> userMap = BeanUtil.beanToMap(
@@ -83,26 +97,204 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         stringRedisTemplate.opsForHash().putAll(tokenKey, userMap);
         stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL, TimeUnit.HOURS);
 
-        // ========== 5. 返回Token ==========
+        log.info(UserConstants.LOGIN_SUCCESS + "，用户ID：{}", user.getId());
         return Result.ok(token);
     }
 
-    /**
-     * 根据手机号创建新用户
-     *
-     * @param phone 手机号
-     * @return 创建的用户对象
-     */
-    private User createUserWithPhone(String phone) {
-        // ========== 1. 创建用户对象 ==========
-        User user = new User();
+    @Override
+    public Result logout(String token) {
+        if (StrUtil.isNotBlank(token)) {
+            String tokenKey = LOGIN_USER_KEY + token;
+            stringRedisTemplate.delete(tokenKey);
+        }
+        UserDTO user = UserHolder.getUser();
+        if (user != null) {
+            log.info(UserConstants.LOGOUT_SUCCESS + "，用户ID：{}", user.getId());
+        }
+        return Result.ok();
+    }
 
-        // ========== 2. 设置用户属性 ==========
+    @Override
+    public Result getCurrentUser() {
+        UserDTO userDTO = UserHolder.getUser();
+        if (userDTO == null) {
+            return Result.fail(UserConstants.USER_NOT_LOGIN);
+        }
+        return Result.ok(userDTO);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Result saveUser(User user) {
+        if (user == null) {
+            return Result.fail(UserConstants.USER_INFO_NOT_NULL);
+        }
+
+        if (StrUtil.isBlank(user.getPhone())) {
+            return Result.fail(UserConstants.USER_PHONE_NOT_NULL);
+        }
+
+        if (checkPhoneExist(user.getPhone(), null)) {
+            return Result.fail(UserConstants.USER_PHONE_EXIST);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        user.setCreateTime(now);
+        user.setUpdateTime(now);
+
+        if (StrUtil.isBlank(user.getNickName())) {
+            user.setNickName("user_" + RandomUtil.randomString(10));
+        }
+
+        boolean success = save(user);
+        if (success) {
+            log.info(UserConstants.USER_CREATE_SUCCESS, user.getId());
+            return Result.ok(user.getId());
+        }
+
+        return Result.fail(UserConstants.USER_CREATE_FAIL);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Result updateUser(User user) {
+        if (user == null || user.getId() == null) {
+            return Result.fail(UserConstants.USER_ID_NOT_NULL);
+        }
+
+        User existUser = getById(user.getId());
+        if (existUser == null) {
+            return Result.fail(UserConstants.USER_NOT_EXIST);
+        }
+
+        if (user.getPhone() != null && StrUtil.isBlank(user.getPhone())) {
+            return Result.fail(UserConstants.USER_PHONE_NOT_NULL);
+        }
+
+        if (StrUtil.isNotBlank(user.getPhone()) && checkPhoneExist(user.getPhone(), user.getId())) {
+            return Result.fail(UserConstants.USER_PHONE_EXIST);
+        }
+
+        user.setUpdateTime(LocalDateTime.now());
+
+        boolean success = updateById(user);
+        if (success) {
+            log.info(UserConstants.USER_UPDATE_SUCCESS, user.getId());
+            return Result.ok();
+        }
+
+        return Result.fail(UserConstants.USER_UPDATE_FAIL);
+    }
+
+    @Override
+    public Result getUserById(Long id) {
+        if (id == null) {
+            return Result.fail(UserConstants.USER_ID_NOT_NULL);
+        }
+
+        User user = getById(id);
+        if (user == null) {
+            return Result.fail(UserConstants.USER_NOT_EXIST);
+        }
+
+        return Result.ok(user);
+    }
+
+    @Override
+    public Result queryUserPage(Integer current, Integer size, String phone, String nickName) {
+        if (current == null || current <= 0) {
+            current = UserConstants.DEFAULT_PAGE_CURRENT;
+        }
+
+        if (size == null || size <= 0) {
+            size = UserConstants.DEFAULT_PAGE_SIZE;
+        } else if (size > UserConstants.MAX_PAGE_SIZE) {
+            size = UserConstants.MAX_PAGE_SIZE;
+        }
+
+        Page<User> page = new Page<>(current, size);
+        LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<>();
+
+        if (StrUtil.isNotBlank(phone)) {
+            queryWrapper.like(User::getPhone, phone);
+        }
+
+        if (StrUtil.isNotBlank(nickName)) {
+            queryWrapper.like(User::getNickName, nickName);
+        }
+
+        queryWrapper.orderByDesc(User::getUpdateTime);
+
+        page(page, queryWrapper);
+
+        return Result.ok(page.getRecords(), page.getTotal());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Result deleteUserById(Long id) {
+        if (id == null) {
+            return Result.fail(UserConstants.USER_ID_NOT_NULL);
+        }
+
+        User user = getById(id);
+        if (user == null) {
+            return Result.fail(UserConstants.USER_NOT_EXIST);
+        }
+
+        boolean success = removeById(id);
+        if (success) {
+            log.info(UserConstants.USER_DELETE_SUCCESS, id);
+            return Result.ok();
+        }
+
+        return Result.fail(UserConstants.USER_DELETE_FAIL);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Result deleteUserByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Result.fail(UserConstants.USER_ID_LIST_NOT_NULL);
+        }
+
+        List<User> existUsers = listByIds(ids);
+        Set<Long> existIds = existUsers.stream()
+                .map(User::getId)
+                .collect(Collectors.toSet());
+
+        Optional<Long> nonExistId = ids.stream()
+                .filter(id -> !existIds.contains(id))
+                .findFirst();
+        if (nonExistId.isPresent()) {
+            return Result.fail(UserConstants.USER_NOT_EXIST + "，用户ID：" + nonExistId.get());
+        }
+
+        boolean success = removeByIds(ids);
+        if (success) {
+            log.info(UserConstants.USER_BATCH_DELETE_SUCCESS, ids.size());
+            return Result.ok();
+        }
+
+        return Result.fail(UserConstants.USER_BATCH_DELETE_FAIL);
+    }
+
+    private User createUserWithPhone(String phone) {
+        User user = new User();
         user.setPhone(phone);
         user.setNickName("user_" + RandomUtil.randomString(10));
-
-        // ========== 3. 保存并返回 ==========
         save(user);
         return user;
+    }
+
+    private boolean checkPhoneExist(String phone, Long excludeId) {
+        LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(User::getPhone, phone);
+
+        if (excludeId != null) {
+            queryWrapper.ne(User::getId, excludeId);
+        }
+
+        return count(queryWrapper) > 0;
     }
 }
