@@ -11,7 +11,10 @@ import com.cclg.dianping.dto.Result;
 import com.cclg.dianping.mapper.ShopMapper;
 import com.cclg.dianping.service.IShopService;
 import com.cclg.dianping.service.IShopTypeService;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,8 +24,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.function.Function;
+
+import static com.cclg.dianping.utils.RedisConstants.CACHE_NULL_KEY;
+import static com.cclg.dianping.utils.RedisConstants.CACHE_NULL_TTL;
+import static com.cclg.dianping.utils.RedisConstants.CACHE_SHOP_KEY;
+import static com.cclg.dianping.utils.RedisConstants.CACHE_SHOP_TTL;
 
 /**
  * 商铺服务实现类
@@ -36,6 +45,12 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     @Resource
     private IShopTypeService shopTypeService;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private ObjectMapper objectMapper;
 
     /**
      * 新增商铺
@@ -143,6 +158,20 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         boolean success = updateById(shop);
         if (success) {
             log.info(ShopConstants.SHOP_UPDATE_SUCCESS, shop.getId());
+            
+            // ========== 8. 删除缓存，保证一致性 ==========
+            // 采用"先更新数据库，再删除缓存"的策略保证一致性
+            String key = CACHE_SHOP_KEY + shop.getId();
+            String nullKey = CACHE_NULL_KEY + "shop:" + shop.getId();
+            try {
+                stringRedisTemplate.delete(key);
+                stringRedisTemplate.delete(nullKey);
+                log.info("商铺缓存已删除，商铺ID：{}", shop.getId());
+            } catch (Exception e) {
+                log.error("删除商铺缓存失败，商铺ID：{}", shop.getId(), e);
+                // 缓存删除失败不影响业务正常返回
+            }
+            
             return Result.ok();
         }
 
@@ -153,8 +182,11 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      * 根据ID查询商铺信息
      * 业务逻辑：
      * 1. 校验商铺ID不能为空
-     * 2. 根据ID查询商铺
-     * 3. 校验商铺是否存在
+     * 2. 先查询Redis缓存
+     * 3. 缓存命中则直接返回
+     * 4. 缓存未命中则查询数据库
+     * 5. 数据库不存在则缓存空值（防止缓存穿透）
+     * 6. 数据库存在则关联查询商铺类型，写入缓存后返回
      *
      * @param id 商铺ID
      * @return 商铺信息
@@ -166,16 +198,62 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.fail(ShopConstants.SHOP_ID_NOT_NULL);
         }
 
-        // ========== 2. 根据ID查询商铺 ==========
+        // ========== 2. 从Redis缓存中查询 ==========
+        String key = CACHE_SHOP_KEY + id;
+        String nullKey = CACHE_NULL_KEY + "shop:" + id;
+        
+        // 先检查是否为空值缓存（防止缓存穿透）
+        if (Boolean.TRUE.equals(stringRedisTemplate.hasKey(nullKey))) {
+            return Result.fail(ShopConstants.SHOP_NOT_EXIST);
+        }
+        
+        // 查询缓存
+        String shopJson = stringRedisTemplate.opsForValue().get(key);
+
+        // ========== 3. 缓存命中，直接返回 ==========
+        if (StrUtil.isNotBlank(shopJson)) {
+            try {
+                Shop shop = objectMapper.readValue(shopJson, Shop.class);
+                // 关联查询商铺类型
+                setShopType(shop);
+                return Result.ok(shop);
+            } catch (JsonProcessingException e) {
+                log.error("解析商铺缓存数据失败，商铺ID：{}", id, e);
+                // 解析失败，继续从数据库查询
+            }
+        }
+
+        // ========== 4. 缓存未命中，查询数据库 ==========
         Shop shop = getById(id);
 
-        // ========== 3. 校验商铺是否存在 ==========
+        // ========== 5. 数据库中不存在，缓存空值防止缓存穿透 ==========
         if (shop == null) {
+            // 缓存空值，设置较短的过期时间
+            stringRedisTemplate.opsForValue().set(
+                    nullKey,
+                    "",
+                    CACHE_NULL_TTL,
+                    TimeUnit.MINUTES
+            );
             return Result.fail(ShopConstants.SHOP_NOT_EXIST);
         }
 
-        // ========== 4. 关联查询商铺类型 ==========
+        // ========== 6. 关联查询商铺类型 ==========
         setShopType(shop);
+
+        // ========== 7. 写入Redis缓存 ==========
+        try {
+            String json = objectMapper.writeValueAsString(shop);
+            stringRedisTemplate.opsForValue().set(
+                    key,
+                    json,
+                    CACHE_SHOP_TTL,
+                    TimeUnit.MINUTES
+            );
+        } catch (JsonProcessingException e) {
+            log.error("序列化商铺数据到缓存失败，商铺ID：{}", id, e);
+            // 序列化失败不影响正常返回
+        }
 
         return Result.ok(shop);
     }
@@ -260,6 +338,19 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         boolean success = removeById(id);
         if (success) {
             log.info(ShopConstants.SHOP_DELETE_SUCCESS, id);
+            
+            // ========== 4. 删除缓存，保证一致性 ==========
+            String key = CACHE_SHOP_KEY + id;
+            String nullKey = CACHE_NULL_KEY + "shop:" + id;
+            try {
+                stringRedisTemplate.delete(key);
+                stringRedisTemplate.delete(nullKey);
+                log.info("商铺缓存已删除，商铺ID：{}", id);
+            } catch (Exception e) {
+                log.error("删除商铺缓存失败，商铺ID：{}", id, e);
+                // 缓存删除失败不影响业务正常返回
+            }
+            
             return Result.ok();
         }
 
@@ -304,6 +395,21 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         boolean success = removeByIds(ids);
         if (success) {
             log.info(ShopConstants.SHOP_BATCH_DELETE_SUCCESS, ids.size());
+            
+            // ========== 4. 批量删除缓存，保证一致性 ==========
+            for (Long id : ids) {
+                String key = CACHE_SHOP_KEY + id;
+                String nullKey = CACHE_NULL_KEY + "shop:" + id;
+                try {
+                    stringRedisTemplate.delete(key);
+                    stringRedisTemplate.delete(nullKey);
+                    log.info("商铺缓存已删除，商铺ID：{}", id);
+                } catch (Exception e) {
+                    log.error("删除商铺缓存失败，商铺ID：{}", id, e);
+                    // 缓存删除失败不影响业务正常返回
+                }
+            }
+            
             return Result.ok();
         }
 
