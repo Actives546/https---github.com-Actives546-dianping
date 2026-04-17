@@ -28,11 +28,13 @@
 
 **接口路径：** `POST /user/code`
 
+**接口说明：** 发送短信验证码到指定手机号，验证码有效期为2分钟。验证码会保存到Redis中，返回值包含生成的验证码（方便开发调试）。
+
 **请求参数：**
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| phone | String | 是 | 手机号（Query参数） |
+| phone | String | 是 | 手机号（Query参数），必须是11位有效手机号格式 |
 
 **请求示例：**
 ```
@@ -44,10 +46,11 @@ POST /user/code?phone=13800138000
 {
   "success": true,
   "errorMsg": null,
-  "data": null,
+  "data": "123456",
   "total": null
 }
 ```
+> 注：data为生成的6位数字验证码
 
 **错误返回：**
 ```json
@@ -65,15 +68,21 @@ POST /user/code?phone=13800138000
 
 **接口路径：** `POST /user/login`
 
+**接口说明：** 用户登录，支持两种方式：
+1. 验证码登录：手机号 + 验证码
+2. 密码登录：手机号 + 密码
+
+登录成功后返回Token，后续请求需要在Header中携带 `authorization: {token}` 进行身份认证。
+
 **请求参数：** (RequestBody - JSON)
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| phone | String | 是 | 手机号 |
-| code | String | 否 | 验证码（验证码登录时必填） |
+| phone | String | 是 | 手机号，必须是11位有效手机号格式 |
+| code | String | 否 | 验证码（验证码登录时必填，6位数字） |
 | password | String | 否 | 密码（密码登录时必填） |
 
-**请求示例：**
+**请求示例1 - 验证码登录：**
 ```json
 {
   "phone": "13800138000",
@@ -81,8 +90,7 @@ POST /user/code?phone=13800138000
 }
 ```
 
-或
-
+**请求示例2 - 密码登录：**
 ```json
 {
   "phone": "13800138000",
@@ -95,7 +103,370 @@ POST /user/code?phone=13800138000
 {
   "success": true,
   "errorMsg": null,
-  "data": "token_string",
+  "data": "550e8400e29b41d4a716446655440000",
+  "total": null
+}
+```
+> 注：data为登录Token，有效期30小时
+
+**错误返回示例1 - 验证码错误：**
+```json
+{
+  "success": false,
+  "errorMsg": "验证码错误或已过期",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例2 - 密码错误：**
+```json
+{
+  "success": false,
+  "errorMsg": "手机号或密码错误",
+  "data": null,
+  "total": null
+}
+```
+
+---
+
+### 3. 用户退出登录
+
+**接口路径：** `POST /user/logout`
+
+**接口说明：** 用户退出登录，清除Redis中的Token缓存。需要在Header中携带有效的authorization Token。
+
+**请求参数：** 无
+
+**请求头：**
+```
+authorization: {token}
+```
+
+**请求示例：**
+```
+POST /user/logout
+Header: authorization: 550e8400e29b41d4a716446655440000
+```
+
+**返回示例：**
+```json
+{
+  "success": true,
+  "errorMsg": null,
+  "data": null,
+  "total": null
+}
+```
+
+---
+
+### 4. 获取当前登录用户信息
+
+**接口路径：** `GET /user/me`
+
+**接口说明：** 获取当前登录用户的基本信息（脱敏）。返回用户的ID、昵称和头像。需要登录状态。
+
+**请求参数：** 无
+
+**请求头：**
+```
+authorization: {token}
+```
+
+**请求示例：**
+```
+GET /user/me
+Header: authorization: 550e8400e29b41d4a716446655440000
+```
+
+**返回示例：**
+```json
+{
+  "success": true,
+  "errorMsg": null,
+  "data": {
+    "id": 1,
+    "nickName": "user_abc123def4",
+    "icon": ""
+  },
+  "total": null
+}
+```
+
+**返回字段说明：**
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| id | Long | 用户ID |
+| nickName | String | 用户昵称 |
+| icon | String | 用户头像URL |
+
+**错误返回：**
+```json
+{
+  "success": false,
+  "errorMsg": "用户未登录",
+  "data": null,
+  "total": null
+}
+```
+
+---
+
+### 5. 新增用户
+
+**接口路径：** `POST /user`
+
+**接口说明：** 管理员新增用户。需要登录状态。手机号必须唯一，不能重复。
+
+**请求参数：** (RequestBody - JSON)
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| phone | String | 是 | 手机号，必须唯一 |
+| password | String | 否 | 密码（建议加密存储） |
+| nickName | String | 否 | 昵称，默认自动生成 `user_` + 随机字符串 |
+| icon | String | 否 | 头像URL，默认空字符串 |
+
+**请求示例：**
+```json
+{
+  "phone": "13900139000",
+  "password": "e10adc3949ba59abbe56e057f20f883e",
+  "nickName": "张三",
+  "icon": "https://example.com/avatar.png"
+}
+```
+
+**返回示例：**
+```json
+{
+  "success": true,
+  "errorMsg": null,
+  "data": 2,
+  "total": null
+}
+```
+> 注：data为新增用户的ID
+
+**错误返回示例1 - 手机号已存在：**
+```json
+{
+  "success": false,
+  "errorMsg": "手机号已存在",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例2 - 手机号为空：**
+```json
+{
+  "success": false,
+  "errorMsg": "手机号不能为空",
+  "data": null,
+  "total": null
+}
+```
+
+---
+
+### 6. 更新用户信息
+
+**接口路径：** `PUT /user`
+
+**接口说明：** 更新用户信息。需要登录状态。更新手机号时需要确保新手机号未被其他用户使用。
+
+**请求参数：** (RequestBody - JSON)
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| id | Long | 是 | 用户ID |
+| phone | String | 否 | 手机号（修改时需要确保唯一） |
+| password | String | 否 | 密码 |
+| nickName | String | 否 | 昵称 |
+| icon | String | 否 | 头像URL |
+
+**请求示例：**
+```json
+{
+  "id": 1,
+  "nickName": "新昵称",
+  "icon": "https://example.com/new-avatar.png"
+}
+```
+
+**返回示例：**
+```json
+{
+  "success": true,
+  "errorMsg": null,
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例1 - 用户不存在：**
+```json
+{
+  "success": false,
+  "errorMsg": "用户不存在",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例2 - 手机号已被使用：**
+```json
+{
+  "success": false,
+  "errorMsg": "手机号已存在",
+  "data": null,
+  "total": null
+}
+```
+
+---
+
+### 7. 根据ID查询用户信息
+
+**接口路径：** `GET /user/{id}`
+
+**接口说明：** 根据用户ID查询用户详细信息。需要登录状态。
+
+**请求参数：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| id | Long | 是 | 用户ID（Path参数） |
+
+**请求示例：**
+```
+GET /user/1
+Header: authorization: {token}
+```
+
+**返回示例：**
+```json
+{
+  "success": true,
+  "errorMsg": null,
+  "data": {
+    "id": 1,
+    "phone": "13800138000",
+    "password": "e10adc3949ba59abbe56e057f20f883e",
+    "nickName": "张三",
+    "icon": "https://example.com/avatar.png",
+    "createTime": "2024-01-01T12:00:00",
+    "updateTime": "2024-01-15T08:30:00"
+  },
+  "total": null
+}
+```
+
+**返回字段说明：**
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| id | Long | 用户ID |
+| phone | String | 手机号 |
+| password | String | 密码（加密存储） |
+| nickName | String | 昵称 |
+| icon | String | 头像URL |
+| createTime | LocalDateTime | 创建时间 |
+| updateTime | LocalDateTime | 更新时间 |
+
+**错误返回：**
+```json
+{
+  "success": false,
+  "errorMsg": "用户不存在",
+  "data": null,
+  "total": null
+}
+```
+
+---
+
+### 8. 分页查询用户列表
+
+**接口路径：** `GET /user/page`
+
+**接口说明：** 分页查询用户列表，支持按手机号和昵称模糊搜索。需要登录状态。
+
+**请求参数：** (Query参数)
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| current | Integer | 否 | 1 | 当前页码，从1开始 |
+| size | Integer | 否 | 10 | 每页大小，默认10，最大100 |
+| phone | String | 否 | null | 手机号（模糊匹配） |
+| nickName | String | 否 | null | 昵称（模糊匹配） |
+
+**请求示例：**
+```
+GET /user/page?current=1&size=10&phone=138&nickName=张
+Header: authorization: {token}
+```
+
+**返回示例：**
+```json
+{
+  "success": true,
+  "errorMsg": null,
+  "data": [
+    {
+      "id": 1,
+      "phone": "13800138000",
+      "password": "e10adc3949ba59abbe56e057f20f883e",
+      "nickName": "张三",
+      "icon": "https://example.com/avatar.png",
+      "createTime": "2024-01-01T12:00:00",
+      "updateTime": "2024-01-15T08:30:00"
+    },
+    {
+      "id": 2,
+      "phone": "13800138001",
+      "password": null,
+      "nickName": "user_abc123def4",
+      "icon": "",
+      "createTime": "2024-01-02T10:00:00",
+      "updateTime": "2024-01-02T10:00:00"
+    }
+  ],
+  "total": 25
+}
+```
+> 注：total为总记录数，用于分页计算
+
+---
+
+### 9. 根据ID删除用户
+
+**接口路径：** `DELETE /user/{id}`
+
+**接口说明：** 根据用户ID删除单个用户。需要登录状态。删除前会校验用户是否存在。
+
+**请求参数：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| id | Long | 是 | 用户ID（Path参数） |
+
+**请求示例：**
+```
+DELETE /user/1
+Header: authorization: {token}
+```
+
+**返回示例：**
+```json
+{
+  "success": true,
+  "errorMsg": null,
+  "data": null,
   "total": null
 }
 ```
@@ -104,7 +475,46 @@ POST /user/code?phone=13800138000
 ```json
 {
   "success": false,
-  "errorMsg": "手机号格式错误",
+  "errorMsg": "用户不存在，用户ID：999",
+  "data": null,
+  "total": null
+}
+```
+
+---
+
+### 10. 批量删除用户
+
+**接口路径：** `DELETE /user/batch`
+
+**接口说明：** 批量删除多个用户。需要登录状态。会校验所有ID是否都存在，如果有不存在的ID会返回错误。
+
+**请求参数：** (RequestBody - JSON)
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| - | List<Long> | 是 | 用户ID列表（JSON数组） |
+
+**请求示例：**
+```json
+[1, 2, 3]
+```
+
+**返回示例：**
+```json
+{
+  "success": true,
+  "errorMsg": null,
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例：**
+```json
+{
+  "success": false,
+  "errorMsg": "用户不存在，用户ID：999",
   "data": null,
   "total": null
 }
