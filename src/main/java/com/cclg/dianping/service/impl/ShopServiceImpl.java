@@ -1,5 +1,6 @@
 package com.cclg.dianping.service.impl;
 
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -161,16 +162,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             
             // ========== 8. 删除缓存，保证一致性 ==========
             // 采用"先更新数据库，再删除缓存"的策略保证一致性
-            String key = CACHE_SHOP_KEY + shop.getId();
-            String nullKey = CACHE_NULL_KEY + "shop:" + shop.getId();
-            try {
-                stringRedisTemplate.delete(key);
-                stringRedisTemplate.delete(nullKey);
-                log.info("商铺缓存已删除，商铺ID：{}", shop.getId());
-            } catch (Exception e) {
-                log.error("删除商铺缓存失败，商铺ID：{}", shop.getId(), e);
-                // 缓存删除失败不影响业务正常返回
-            }
+            deleteShopCache(shop.getId());
             
             return Result.ok();
         }
@@ -228,12 +220,12 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
         // ========== 5. 数据库中不存在，缓存空值防止缓存穿透 ==========
         if (shop == null) {
-            // 缓存空值，设置较短的过期时间
+            // 缓存空值，设置30秒过期时间
             stringRedisTemplate.opsForValue().set(
                     nullKey,
                     "",
                     CACHE_NULL_TTL,
-                    TimeUnit.MINUTES
+                    TimeUnit.SECONDS
             );
             return Result.fail(ShopConstants.SHOP_NOT_EXIST);
         }
@@ -340,16 +332,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             log.info(ShopConstants.SHOP_DELETE_SUCCESS, id);
             
             // ========== 4. 删除缓存，保证一致性 ==========
-            String key = CACHE_SHOP_KEY + id;
-            String nullKey = CACHE_NULL_KEY + "shop:" + id;
-            try {
-                stringRedisTemplate.delete(key);
-                stringRedisTemplate.delete(nullKey);
-                log.info("商铺缓存已删除，商铺ID：{}", id);
-            } catch (Exception e) {
-                log.error("删除商铺缓存失败，商铺ID：{}", id, e);
-                // 缓存删除失败不影响业务正常返回
-            }
+            deleteShopCache(id);
             
             return Result.ok();
         }
@@ -361,8 +344,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      * 批量删除商铺
      * 业务逻辑：
      * 1. 校验商铺ID列表不能为空
-     * 2. 批量查询所有商铺，校验是否存在
-     * 3. 执行批量删除操作
+     * 2. 对ID列表进行去重，避免重复操作
+     * 3. 批量查询所有商铺，校验是否存在
+     * 4. 执行批量删除操作
      *
      * @param ids 商铺ID列表
      * @return 操作结果
@@ -371,43 +355,42 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Transactional(rollbackFor = Exception.class)
     public Result deleteShopByIds(List<Long> ids) {
         // ========== 1. 校验商铺ID列表不能为空 ==========
-        if (ids == null || ids.isEmpty()) {
+        if (CollUtil.isEmpty(ids)) {
+            return Result.fail(ShopConstants.SHOP_ID_LIST_NOT_NULL);
+        }
+        
+        // ========== 2. 对ID列表进行去重，避免重复操作 ==========
+        Set<Long> distinctIds = ids.stream()
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+        if (distinctIds.isEmpty()) {
             return Result.fail(ShopConstants.SHOP_ID_LIST_NOT_NULL);
         }
 
-        // ========== 2. 批量查询所有商铺，校验是否存在 ==========
+        // ========== 3. 批量查询所有商铺，校验是否存在 ==========
         // 使用listByIds一次性查询所有商铺，替代循环单条查询
-        List<Shop> existShops = listByIds(ids);
+        List<Shop> existShops = listByIds(distinctIds);
         Set<Long> existIds = existShops.stream()
                 .map(Shop::getId)
                 .collect(Collectors.toSet());
 
         // 找出不存在的ID
-        Optional<Long> nonExistId = ids.stream()
+        Optional<Long> nonExistId = distinctIds.stream()
                 .filter(id -> !existIds.contains(id))
                 .findFirst();
         if (nonExistId.isPresent()) {
             return Result.fail(ShopConstants.SHOP_NOT_EXIST + "，商铺ID：" + nonExistId.get());
         }
 
-        // ========== 3. 执行批量删除操作 ==========
+        // ========== 4. 执行批量删除操作 ==========
         // 使用MyBatis-Plus的removeByIds方法进行批量删除
-        boolean success = removeByIds(ids);
+        boolean success = removeByIds(distinctIds);
         if (success) {
-            log.info(ShopConstants.SHOP_BATCH_DELETE_SUCCESS, ids.size());
+            log.info(ShopConstants.SHOP_BATCH_DELETE_SUCCESS, distinctIds.size());
             
-            // ========== 4. 批量删除缓存，保证一致性 ==========
-            for (Long id : ids) {
-                String key = CACHE_SHOP_KEY + id;
-                String nullKey = CACHE_NULL_KEY + "shop:" + id;
-                try {
-                    stringRedisTemplate.delete(key);
-                    stringRedisTemplate.delete(nullKey);
-                    log.info("商铺缓存已删除，商铺ID：{}", id);
-                } catch (Exception e) {
-                    log.error("删除商铺缓存失败，商铺ID：{}", id, e);
-                    // 缓存删除失败不影响业务正常返回
-                }
+            // ========== 5. 批量删除缓存，保证一致性 ==========
+            for (Long id : distinctIds) {
+                deleteShopCache(id);
             }
             
             return Result.ok();
@@ -436,7 +419,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      * @param shops 商铺列表
      */
     private void setShopTypeBatch(List<Shop> shops) {
-        if (shops == null || shops.isEmpty()) {
+        if (CollUtil.isEmpty(shops)) {
             return;
         }
 
@@ -498,5 +481,26 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         ShopType shopType = shopTypeService.getById(typeId);
         return shopType != null;
+    }
+    
+    /**
+     * 删除商铺缓存
+     * 包含商铺数据缓存和空值缓存
+     *
+     * @param id 商铺ID
+     */
+    private void deleteShopCache(Long id) {
+        if (id == null) {
+            return;
+        }
+        String key = CACHE_SHOP_KEY + id;
+        String nullKey = CACHE_NULL_KEY + "shop:" + id;
+        try {
+            stringRedisTemplate.delete(key);
+            stringRedisTemplate.delete(nullKey);
+            log.info("商铺缓存已删除，商铺ID：{}", id);
+        } catch (Exception e) {
+            log.error("删除商铺缓存失败，商铺ID：{}", id, e);
+        }
     }
 }
