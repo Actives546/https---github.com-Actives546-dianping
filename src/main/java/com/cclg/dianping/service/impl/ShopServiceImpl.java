@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.function.Function;
 
-import static com.cclg.dianping.utils.RedisConstants.CACHE_NULL_KEY;
+import static com.cclg.dianping.utils.RedisConstants.CACHE_NULL_SHOP_KEY;
 import static com.cclg.dianping.utils.RedisConstants.CACHE_NULL_TTL;
 import static com.cclg.dianping.utils.RedisConstants.CACHE_SHOP_KEY;
 import static com.cclg.dianping.utils.RedisConstants.CACHE_SHOP_TTL;
@@ -192,7 +192,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
         // ========== 2. 从Redis缓存中查询 ==========
         String key = CACHE_SHOP_KEY + id;
-        String nullKey = CACHE_NULL_KEY + "shop:" + id;
+        String nullKey = CACHE_NULL_SHOP_KEY + id;
         
         // 先检查是否为空值缓存（防止缓存穿透）
         if (Boolean.TRUE.equals(stringRedisTemplate.hasKey(nullKey))) {
@@ -494,7 +494,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return;
         }
         String key = CACHE_SHOP_KEY + id;
-        String nullKey = CACHE_NULL_KEY + "shop:" + id;
+        String nullKey = CACHE_NULL_SHOP_KEY + id;
         try {
             stringRedisTemplate.delete(key);
             stringRedisTemplate.delete(nullKey);
