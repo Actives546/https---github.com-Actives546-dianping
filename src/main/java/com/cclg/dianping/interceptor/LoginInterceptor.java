@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static com.cclg.dianping.utils.RedisConstants.LOGIN_USER_KEY;
-import static com.cclg.dianping.utils.RedisConstants.LOGIN_USER_TTL;
+import static com.cclg.dianping.utils.RedisConstants.LOGIN_USER_TTL_MINUTES;
 
 public class LoginInterceptor implements HandlerInterceptor {
 
@@ -38,7 +38,7 @@ public class LoginInterceptor implements HandlerInterceptor {
         }
         UserDTO userDTO = BeanUtil.fillBeanWithMap(userMap, new UserDTO(), false);
         UserHolder.saveUser(userDTO);
-        stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL, TimeUnit.DAYS);
+        stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL_MINUTES, TimeUnit.MINUTES);
         return true;
     }
 

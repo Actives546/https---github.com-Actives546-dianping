@@ -30,9 +30,9 @@ import java.util.stream.Collectors;
 import java.util.function.Function;
 
 import static com.cclg.dianping.utils.RedisConstants.CACHE_NULL_SHOP_KEY;
-import static com.cclg.dianping.utils.RedisConstants.CACHE_NULL_TTL;
+import static com.cclg.dianping.utils.RedisConstants.CACHE_NULL_TTL_SECONDS;
 import static com.cclg.dianping.utils.RedisConstants.CACHE_SHOP_KEY;
-import static com.cclg.dianping.utils.RedisConstants.CACHE_SHOP_TTL;
+import static com.cclg.dianping.utils.RedisConstants.CACHE_SHOP_TTL_MINUTES;
 
 /**
  * 商铺服务实现类
@@ -224,7 +224,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             stringRedisTemplate.opsForValue().set(
                     nullKey,
                     "",
-                    CACHE_NULL_TTL,
+                    CACHE_NULL_TTL_SECONDS,
                     TimeUnit.SECONDS
             );
             return Result.fail(ShopConstants.SHOP_NOT_EXIST);
@@ -239,7 +239,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             stringRedisTemplate.opsForValue().set(
                     key,
                     json,
-                    CACHE_SHOP_TTL,
+                    CACHE_SHOP_TTL_MINUTES,
                     TimeUnit.MINUTES
             );
         } catch (JsonProcessingException e) {
