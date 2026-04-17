@@ -11,7 +11,7 @@ public class RedisConstants {
     public static final String CACHE_SHOP_KEY = "cache:shop:";
     public static final Long CACHE_SHOP_TTL = 30L;
     
-    public static final String CACHE_NULL_KEY = "cache:null:";
+    public static final String CACHE_NULL_SHOP_KEY = "cache:null:shop:";
     public static final Long CACHE_NULL_TTL = 30L;
     
     private RedisConstants() {
