@@ -33,9 +33,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.cclg.dianping.utils.RedisConstants.LOGIN_CODE_KEY;
-import static com.cclg.dianping.utils.RedisConstants.LOGIN_CODE_TTL;
+import static com.cclg.dianping.utils.RedisConstants.LOGIN_CODE_TTL_MINUTES;
 import static com.cclg.dianping.utils.RedisConstants.LOGIN_USER_KEY;
-import static com.cclg.dianping.utils.RedisConstants.LOGIN_USER_TTL;
+import static com.cclg.dianping.utils.RedisConstants.LOGIN_USER_TTL_MINUTES;
 
 @Slf4j
 @Service
@@ -51,7 +51,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         stringRedisTemplate.opsForValue().set(
                 key,
                 code,
-                LOGIN_CODE_TTL,
+                LOGIN_CODE_TTL_MINUTES,
                 TimeUnit.MINUTES
         );
         log.debug("发送短信验证码成功，手机号：{}，验证码：{}", phone, code);
@@ -100,7 +100,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         String tokenKey = LOGIN_USER_KEY + token;
         stringRedisTemplate.opsForHash().putAll(tokenKey, userMap);
-        stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL, TimeUnit.HOURS);
+        stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL_MINUTES, TimeUnit.MINUTES);
 
         log.info(UserConstants.LOGIN_SUCCESS + "，用户ID：{}", user.getId());
         return Result.ok(token);
