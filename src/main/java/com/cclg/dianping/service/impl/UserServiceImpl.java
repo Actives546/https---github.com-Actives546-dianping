@@ -5,6 +5,7 @@ import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.crypto.digest.DigestUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -75,8 +76,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                 user = createUserWithPhone(phone);
             }
         } else if (StrUtil.isNotBlank(password)) {
-            user = query().eq("phone", phone).eq("password", password).one();
+            user = query().eq("phone", phone).one();
             if (user == null) {
+                return Result.fail("手机号或密码错误");
+            }
+            String encryptedPassword = DigestUtil.md5Hex(password);
+            if (!encryptedPassword.equals(user.getPassword())) {
                 return Result.fail("手机号或密码错误");
             }
         } else {
@@ -138,6 +143,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             return Result.fail(UserConstants.USER_PHONE_EXIST);
         }
 
+        if (StrUtil.isNotBlank(user.getPassword())) {
+            user.setPassword(DigestUtil.md5Hex(user.getPassword()));
+        }
+
         LocalDateTime now = LocalDateTime.now();
         user.setCreateTime(now);
         user.setUpdateTime(now);
@@ -173,6 +182,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         if (StrUtil.isNotBlank(user.getPhone()) && checkPhoneExist(user.getPhone(), user.getId())) {
             return Result.fail(UserConstants.USER_PHONE_EXIST);
+        }
+
+        if (StrUtil.isNotBlank(user.getPassword())) {
+            user.setPassword(DigestUtil.md5Hex(user.getPassword()));
         }
 
         user.setUpdateTime(LocalDateTime.now());
