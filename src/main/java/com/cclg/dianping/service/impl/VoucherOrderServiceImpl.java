@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.concurrent.TimeUnit;
 
 import static com.cclg.dianping.utils.RedisConstants.LOCK_ORDER_KEY;
 
@@ -69,6 +70,16 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
      */
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
 
+    /**
+     * 锁等待时间（秒）
+     */
+    private static final long LOCK_WAIT_TIME = 0L;
+
+    /**
+     * 锁自动释放时间（秒）
+     */
+    private static final long LOCK_LEASE_TIME = 10L;
+
     static {
         SECKILL_SCRIPT = new DefaultRedisScript<>();
         SECKILL_SCRIPT.setLocation(new ClassPathResource("seckill.lua"));
@@ -81,8 +92,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
      * 1. 校验秒杀券是否存在
      * 2. 校验秒杀是否在有效期内
      * 3. 使用Lua脚本在Redis中预扣减库存和判断一人一单
-     * 4. 如果Redis校验通过，创建订单
-     * 5. 使用分布式锁保证创建订单的原子性
+     * 4. 获取分布式锁（在事务外部，确保锁范围包含整个事务生命周期）
+     * 5. 如果Redis校验通过，创建订单（带事务）
+     * 6. 事务提交后释放锁
      *
      * @param voucherId 秒杀券ID
      * @return 操作结果，成功返回订单ID
@@ -152,10 +164,41 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("您已经抢购过该优惠券");
         }
 
-        // ========== 5. 创建订单（使用分布式锁保证原子性 ==========
-        // 获取代理对象，确保事务生效
-        IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
-        Long orderId = proxy.createVoucherOrder(voucherId, userId);
+        // ========== 5. 获取分布式锁（在事务外部获取） ==========
+        // 锁的key：order:lock:{userId}:{voucherId}
+        String lockKey = LOCK_ORDER_KEY + userId + ":" + voucherId;
+        RLock lock = redissonClient.getLock(lockKey);
+        Long orderId = null;
+
+        try {
+            // 尝试获取锁，设置超时时间防止死锁
+            // waitTime: 获取锁的等待时间（0表示不等待）
+            // leaseTime: 锁自动释放时间（防止死锁）
+            boolean isLocked = lock.tryLock(LOCK_WAIT_TIME, LOCK_LEASE_TIME, TimeUnit.SECONDS);
+            if (!isLocked) {
+                log.error("获取分布式锁失败，用户ID：{}，优惠券ID：{}", userId, voucherId);
+                return Result.fail("系统繁忙，请稍后再试");
+            }
+
+            log.info("获取分布式锁成功，用户ID：{}，优惠券ID：{}", userId, voucherId);
+
+            // ========== 6. 创建订单（带事务） ==========
+            // 获取代理对象，确保事务生效
+            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
+            orderId = proxy.createVoucherOrder(voucherId, userId);
+
+        } catch (InterruptedException e) {
+            log.error("获取分布式锁被中断，用户ID：{}，优惠券ID：{}", userId, voucherId, e);
+            Thread.currentThread().interrupt();
+            return Result.fail("系统异常");
+        } finally {
+            // ========== 7. 释放锁（事务已经提交后才释放） ==========
+            // 检查当前线程是否持有该锁，避免误释放其他线程的锁
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+                log.info("释放分布式锁成功，用户ID：{}，优惠券ID：{}", userId, voucherId);
+            }
+        }
 
         log.info("秒杀成功，订单ID：{}，用户ID：{}，优惠券ID：{}", orderId, userId, voucherId);
         return Result.ok(orderId);
@@ -163,12 +206,12 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     /**
      * 创建优惠券订单
-     * 在分布式锁保护下执行，保证数据一致性
+     * 在事务保护下执行，保证数据一致性
+     * 注意：分布式锁在事务外部获取和释放，确保锁范围包含整个事务生命周期
      * 业务流程：
-     * 1. 获取分布式锁（以用户ID和优惠券ID作为锁的key）
-     * 2. 双重校验：查询用户是否已经下单
-     * 3. 扣减库存（使用乐观锁）
-     * 4. 创建订单
+     * 1. 双重校验：查询用户是否已经下单
+     * 2. 扣减库存（使用乐观锁）
+     * 3. 创建订单
      *
      * @param voucherId 秒杀券ID
      * @param userId    用户ID
@@ -177,61 +220,52 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createVoucherOrder(Long voucherId, Long userId) {
-        // ========== 1. 获取分布式锁 ==========
-        // 锁的key：order:lock:{userId}:{voucherId}
-        String lockKey = LOCK_ORDER_KEY + userId + ":" + voucherId;
-        RLock lock = redissonClient.getLock(lockKey);
+        log.info("开始创建订单，用户ID：{}，优惠券ID：{}", userId, voucherId);
 
-        try {
-            // 尝试获取锁
-            boolean isLocked = lock.tryLock();
-            if (!isLocked) {
-                log.error("获取分布式锁失败，用户ID：{}，优惠券ID：{}", userId, voucherId);
-                throw new RuntimeException("系统繁忙，请稍后再试");
-            }
+        // ========== 1. 双重校验：查询用户是否已经下单 ==========
+        // 虽然Redis已经预校验，但数据库层面再次校验防止数据不一致
+        LambdaQueryWrapper<VoucherOrder> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(VoucherOrder::getUserId, userId);
+        queryWrapper.eq(VoucherOrder::getVoucherId, voucherId);
+        VoucherOrder existOrder = getOne(queryWrapper);
 
-            // ========== 2. 双重校验：查询用户是否已经下单 ==========
-            LambdaQueryWrapper<VoucherOrder> queryWrapper = new LambdaQueryWrapper<>();
-            queryWrapper.eq(VoucherOrder::getUserId, userId);
-            queryWrapper.eq(VoucherOrder::getVoucherId, voucherId);
-            VoucherOrder existOrder = getOne(queryWrapper);
-
-            if (existOrder != null) {
-                log.warn("用户已经抢购过该优惠券，用户ID：{}，优惠券ID：{}", userId, voucherId);
-                throw new RuntimeException("您已经抢购过该优惠券");
-            }
-
-            // ========== 3. 扣减库存（使用乐观锁） ==========
-            boolean success = seckillVoucherService.update()
-                    .setSql("stock = stock - 1")
-                    .eq("voucher_id", voucherId)
-                    .gt("stock", 0)
-                    .update();
-
-            if (!success) {
-                log.error("扣减库存失败，优惠券ID：{}", voucherId);
-                throw new RuntimeException("库存不足");
-            }
-
-            // ========== 4. 创建订单 ==========
-            VoucherOrder order = new VoucherOrder();
-            // 使用雪花算法生成订单ID
-            long orderId = IdUtil.getSnowflake(1, 1).nextId();
-            order.setId(orderId);
-            order.setUserId(userId);
-            order.setVoucherId(voucherId);
-            // 订单状态：1-未支付
-            order.setStatus(1);
-            LocalDateTime now = LocalDateTime.now();
-            order.setCreateTime(now);
-            order.setUpdateTime(now);
-
-            save(order);
-
-            return orderId;
-        } finally {
-            // 释放锁
-            lock.unlock();
+        if (existOrder != null) {
+            log.warn("用户已经抢购过该优惠券，用户ID：{}，优惠券ID：{}", userId, voucherId);
+            throw new RuntimeException("您已经抢购过该优惠券");
         }
+
+        // ========== 2. 扣减库存（使用乐观锁） ==========
+        // 使用乐观锁：stock > 0 保证不会超卖
+        boolean success = seckillVoucherService.update()
+                .setSql("stock = stock - 1")
+                .eq("voucher_id", voucherId)
+                .gt("stock", 0)
+                .update();
+
+        if (!success) {
+            log.error("扣减库存失败，优惠券ID：{}", voucherId);
+            throw new RuntimeException("库存不足");
+        }
+
+        log.info("扣减库存成功，优惠券ID：{}", voucherId);
+
+        // ========== 3. 创建订单 ==========
+        VoucherOrder order = new VoucherOrder();
+        // 使用雪花算法生成订单ID
+        long orderId = IdUtil.getSnowflake(1, 1).nextId();
+        order.setId(orderId);
+        order.setUserId(userId);
+        order.setVoucherId(voucherId);
+        // 订单状态：1-未支付
+        order.setStatus(1);
+        LocalDateTime now = LocalDateTime.now();
+        order.setCreateTime(now);
+        order.setUpdateTime(now);
+
+        save(order);
+
+        log.info("创建订单成功，订单ID：{}", orderId);
+
+        return orderId;
     }
 }
