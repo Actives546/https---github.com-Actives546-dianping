@@ -3,6 +3,7 @@ package com.cclg.dianping.controller;
 import com.cclg.dianping.constant.VoucherConstants;
 import com.cclg.dianping.domain.Voucher;
 import com.cclg.dianping.dto.Result;
+import com.cclg.dianping.service.IVoucherOrderService;
 import com.cclg.dianping.service.IVoucherService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -27,6 +28,12 @@ public class VoucherController {
      */
     @Resource
     private IVoucherService voucherService;
+
+    /**
+     * 优惠券订单服务
+     */
+    @Resource
+    private IVoucherOrderService voucherOrderService;
 
     /**
      * 新增优惠券
@@ -152,5 +159,25 @@ public class VoucherController {
     public Result queryVoucherByShopId(@PathVariable("shopId") Long shopId) {
         // 调用服务层根据商铺ID查询优惠券列表
         return voucherService.queryVoucherByShopId(shopId);
+    }
+
+    /**
+     * 秒杀券下单
+     * 实现一人一单、库存扣减一致性的保证
+     * 业务流程：
+     * 1. 校验秒杀券是否存在
+     * 2. 校验秒杀是否在有效期内
+     * 3. 使用Redis Lua脚本预扣减库存和判断一人一单
+     * 4. 使用分布式锁保证订单创建的原子性
+     *
+     * @param voucherId 秒杀券ID
+     * @return 操作结果，成功返回订单ID
+     */
+    @PostMapping("/seckill/{id}")
+    public Result seckillVoucher(@PathVariable("id") Long voucherId) {
+        // 记录秒杀券下单日志
+        log.info("秒杀券下单，优惠券ID：{}", voucherId);
+        // 调用服务层执行秒杀券下单
+        return voucherOrderService.seckillVoucher(voucherId);
     }
 }
