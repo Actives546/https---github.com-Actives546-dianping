@@ -5,11 +5,14 @@ import com.cclg.dianping.domain.SeckillVoucher;
 import com.cclg.dianping.domain.Voucher;
 import com.cclg.dianping.service.ISeckillVoucherService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+
+import static com.cclg.dianping.utils.RedisConstants.SECKILL_STOCK_KEY;
 
 /**
  * 秒杀券处理器
@@ -26,6 +29,12 @@ public class SeckillVoucherHandler implements VoucherHandler {
      */
     @Resource
     private ISeckillVoucherService seckillVoucherService;
+
+    /**
+     * Redis模板，用于库存缓存
+     */
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
 
     /**
      * 获取处理器支持的优惠券类型
@@ -74,7 +83,7 @@ public class SeckillVoucherHandler implements VoucherHandler {
 
     /**
      * 新增秒杀券时的额外处理逻辑
-     * 保存秒杀券信息到SeckillVoucher表
+     * 保存秒杀券信息到SeckillVoucher表，并同步库存到Redis
      *
      * @param voucher 优惠券信息
      */
@@ -99,6 +108,11 @@ public class SeckillVoucherHandler implements VoucherHandler {
             log.error("保存秒杀券信息失败，优惠券ID：{}", voucher.getId());
             throw new RuntimeException(VoucherConstants.SECKILL_VOUCHER_CREATE_FAIL);
         }
+
+        // ========== 同步库存到Redis ==========
+        String stockKey = SECKILL_STOCK_KEY + voucher.getId();
+        stringRedisTemplate.opsForValue().set(stockKey, voucher.getStock().toString());
+        log.info("秒杀券库存已同步到Redis，优惠券ID：{}，库存：{}", voucher.getId(), voucher.getStock());
 
         log.info("秒杀券新增完成，优惠券ID：{}", voucher.getId());
     }
@@ -151,7 +165,7 @@ public class SeckillVoucherHandler implements VoucherHandler {
 
     /**
      * 更新秒杀券时的额外处理逻辑
-     * 更新或创建SeckillVoucher记录
+     * 更新或创建SeckillVoucher记录，并同步库存到Redis
      *
      * @param voucher       待更新的优惠券信息
      * @param existVoucher  已存在的优惠券信息
@@ -175,7 +189,8 @@ public class SeckillVoucherHandler implements VoucherHandler {
             SeckillVoucher newSeckillVoucher = new SeckillVoucher();
             newSeckillVoucher.setVoucherId(voucher.getId());
             // 使用传入的值，如果没有则使用默认值
-            newSeckillVoucher.setStock(voucher.getStock() != null ? voucher.getStock() : 0);
+            Integer newStock = voucher.getStock() != null ? voucher.getStock() : 0;
+            newSeckillVoucher.setStock(newStock);
             newSeckillVoucher.setBeginTime(voucher.getBeginTime() != null ? voucher.getBeginTime() : now);
             newSeckillVoucher.setEndTime(voucher.getEndTime() != null ? voucher.getEndTime() : now.plusDays(7));
             newSeckillVoucher.setCreateTime(now);
@@ -186,6 +201,11 @@ public class SeckillVoucherHandler implements VoucherHandler {
                 log.error("创建秒杀券信息失败，优惠券ID：{}", voucher.getId());
                 throw new RuntimeException(VoucherConstants.SECKILL_VOUCHER_CREATE_FAIL);
             }
+
+            // ========== 同步库存到Redis ==========
+            String stockKey = SECKILL_STOCK_KEY + voucher.getId();
+            stringRedisTemplate.opsForValue().set(stockKey, newStock.toString());
+            log.info("秒杀券库存已同步到Redis，优惠券ID：{}，库存：{}", voucher.getId(), newStock);
         } else {
             // 如果已存在，更新秒杀券信息
             SeckillVoucher updateSeckillVoucher = new SeckillVoucher();
@@ -206,6 +226,13 @@ public class SeckillVoucherHandler implements VoucherHandler {
             if (!success) {
                 log.error("更新秒杀券信息失败，优惠券ID：{}", voucher.getId());
                 throw new RuntimeException(VoucherConstants.SECKILL_VOUCHER_UPDATE_FAIL);
+            }
+
+            // ========== 如果更新了库存，同步到Redis ==========
+            if (voucher.getStock() != null) {
+                String stockKey = SECKILL_STOCK_KEY + voucher.getId();
+                stringRedisTemplate.opsForValue().set(stockKey, voucher.getStock().toString());
+                log.info("秒杀券库存已更新到Redis，优惠券ID：{}，库存：{}", voucher.getId(), voucher.getStock());
             }
         }
 

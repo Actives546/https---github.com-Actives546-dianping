@@ -43,6 +43,26 @@ public class RedisConstants {
      */
     public static final String CACHE_NULL_VOUCHER_KEY = "cache:null:voucher:";
 
+    /**
+     * 秒杀库存Redis键前缀
+     */
+    public static final String SECKILL_STOCK_KEY = "seckill:stock:";
+
+    /**
+     * 秒杀订单Redis键前缀（用于判断一人一单）
+     */
+    public static final String SECKILL_ORDER_KEY = "seckill:order:";
+
+    /**
+     * 分布式锁键前缀（订单锁）
+     */
+    public static final String LOCK_ORDER_KEY = "lock:order:";
+
+    /**
+     * 分布式锁默认过期时间（秒）
+     */
+    public static final Long LOCK_TTL_SECONDS = 10L;
+
     private RedisConstants() {
     }
 }
