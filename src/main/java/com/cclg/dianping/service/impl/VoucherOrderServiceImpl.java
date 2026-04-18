@@ -1,6 +1,5 @@
 package com.cclg.dianping.service.impl;
 
-import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.IdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -24,16 +23,11 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.Collections;
-import java.util.Collections;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import static com.cclg.dianping.utils.RedisConstants.LOCK_ORDER_KEY;
-import static com.cclg.dianping.utils.RedisConstants.SECKILL_STOCK_KEY;
 
 /**
  * 优惠券订单服务实现类
@@ -101,10 +95,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
 
         // 获取当前用户ID
-        Long userId = UserHolder.getUser().getId();
-        if (userId == null) {
+        com.cclg.dianping.dto.UserDTO user = UserHolder.getUser();
+        if (user == null || user.getId() == null) {
             return Result.fail("用户未登录");
         }
+        Long userId = user.getId();
 
         // ========== 2. 校验秒杀券基本信息 ==========
         Voucher voucher = voucherService.getById(voucherId);

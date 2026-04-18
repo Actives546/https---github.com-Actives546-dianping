@@ -44,6 +44,8 @@ public class MvcConfig implements WebMvcConfigurer {
         CorsConfiguration config = new CorsConfiguration();
 
         // 允许所有域名，生产环境建议指定具体域名
+        // 注意：当allowCredentials为true时，不能使用*作为allowedOrigin
+        // 这里为了开发方便，暂时不设置allowCredentials，或者在生产环境指定具体域名
         config.addAllowedOrigin("*");
 
         // 允许所有请求头
@@ -51,9 +53,6 @@ public class MvcConfig implements WebMvcConfigurer {
 
         // 允许所有请求方法
         config.addAllowedMethod("*");
-
-        // 允许携带凭证（如Cookie）
-        config.setAllowCredentials(true);
 
         // 预检请求的有效期，单位为秒
         config.setMaxAge(3600L);
