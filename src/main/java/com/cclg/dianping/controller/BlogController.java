@@ -173,15 +173,20 @@ public class BlogController {
     }
 
     /**
-     * 根据博客ID查询评论列表
+     * 根据博客ID查询评论列表（分页）
      *
-     * @param blogId 博客ID
-     * @return 评论列表
+     * @param blogId  博客ID
+     * @param current 当前页码，默认1
+     * @param size    每页大小，默认10，最大100
+     * @return 评论列表（分页）
      */
     @GetMapping("/comment/blog/{blogId}")
-    public Result queryCommentsByBlogId(@PathVariable("blogId") Long blogId) {
-        log.info("根据博客ID查询评论列表，博客ID：{}", blogId);
-        return blogCommentsService.queryCommentsByBlogId(blogId);
+    public Result queryCommentsByBlogId(
+            @PathVariable("blogId") Long blogId,
+            @RequestParam(value = "current", defaultValue = "1") Integer current,
+            @RequestParam(value = "size", defaultValue = "10") Integer size) {
+        log.info("根据博客ID查询评论列表，博客ID：{}，当前页：{}，每页大小：{}", blogId, current, size);
+        return blogCommentsService.queryCommentsByBlogId(blogId, current, size);
     }
 
     /**
