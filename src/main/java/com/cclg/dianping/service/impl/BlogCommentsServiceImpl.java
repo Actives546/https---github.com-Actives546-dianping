@@ -9,10 +9,12 @@ import com.cclg.dianping.constant.BlogConstants;
 import com.cclg.dianping.domain.Blog;
 import com.cclg.dianping.domain.BlogComments;
 import com.cclg.dianping.dto.Result;
+import com.cclg.dianping.dto.UserDTO;
 import com.cclg.dianping.mapper.BlogCommentsMapper;
 import com.cclg.dianping.mapper.BlogMapper;
 import com.cclg.dianping.service.IBlogCommentsService;
 import com.cclg.dianping.service.IBlogService;
+import com.cclg.dianping.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,10 +65,10 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
                 return Result.fail(BlogConstants.COMMENT_PARENT_NOT_EXIST);
             }
             if (!comment.getBlogId().equals(parentComment.getBlogId())) {
-                return Result.fail("父评论不属于当前博客");
+                return Result.fail(BlogConstants.COMMENT_PARENT_NOT_IN_BLOG);
             }
         } else {
-            comment.setParentId(0L);
+            comment.setParentId(BlogConstants.DEFAULT_PARENT_ID);
         }
 
         if (comment.getAnswerId() != null && comment.getAnswerId() > 0) {
@@ -75,18 +77,18 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
                 return Result.fail(BlogConstants.COMMENT_ANSWER_NOT_EXIST);
             }
             if (!comment.getBlogId().equals(answerComment.getBlogId())) {
-                return Result.fail("回复的评论不属于当前博客");
+                return Result.fail(BlogConstants.COMMENT_ANSWER_NOT_IN_BLOG);
             }
             if (!comment.getParentId().equals(answerComment.getParentId())) {
-                return Result.fail("回复的评论不属于当前父评论");
+                return Result.fail(BlogConstants.COMMENT_ANSWER_NOT_IN_PARENT);
             }
         }
 
         if (comment.getLiked() == null) {
-            comment.setLiked(0);
+            comment.setLiked(BlogConstants.DEFAULT_LIKED);
         }
         if (comment.getStatus() == null) {
-            comment.setStatus(false);
+            comment.setStatus(BlogConstants.COMMENT_STATUS_NORMAL);
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -97,9 +99,9 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
         if (success) {
             log.info(BlogConstants.COMMENT_CREATE_SUCCESS, comment.getId());
 
-            int updateCount = blogMapper.incrementComments(comment.getBlogId(), 1);
+            int updateCount = blogMapper.incrementComments(comment.getBlogId(), BlogConstants.DELTA_ONE);
             if (updateCount <= 0) {
-                log.warn("更新博客评论数失败，博客ID：{}", comment.getBlogId());
+                log.warn(BlogConstants.COMMENT_COUNT_UPDATE_FAIL, comment.getBlogId());
             }
 
             return Result.ok(comment.getId());
@@ -118,6 +120,15 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
         BlogComments existComment = getById(comment.getId());
         if (existComment == null) {
             return Result.fail(BlogConstants.COMMENT_NOT_EXIST);
+        }
+
+        UserDTO currentUser = UserHolder.getUser();
+        if (currentUser == null) {
+            return Result.fail(BlogConstants.USER_NOT_LOGIN);
+        }
+
+        if (!existComment.getUserId().equals(currentUser.getId())) {
+            return Result.fail(BlogConstants.COMMENT_NOT_OWNER);
         }
 
         if (comment.getContent() != null && StrUtil.isBlank(comment.getContent())) {
@@ -222,6 +233,15 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
             return Result.fail(BlogConstants.COMMENT_NOT_EXIST);
         }
 
+        UserDTO currentUser = UserHolder.getUser();
+        if (currentUser == null) {
+            return Result.fail(BlogConstants.USER_NOT_LOGIN);
+        }
+
+        if (!comment.getUserId().equals(currentUser.getId())) {
+            return Result.fail(BlogConstants.COMMENT_NOT_OWNER);
+        }
+
         Set<Long> allIdsToDelete = collectAllChildComments(id);
         allIdsToDelete.add(id);
 
@@ -229,11 +249,11 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
         boolean success = removeByIds(allIdsToDelete);
         if (success) {
             log.info(BlogConstants.COMMENT_DELETE_SUCCESS, id);
-            log.info("级联删除子评论成功，共删除 {} 条评论", deleteCount);
+            log.info(BlogConstants.COMMENT_CASCADE_DELETE, deleteCount);
 
             int updateCount = blogMapper.decrementComments(comment.getBlogId(), deleteCount);
             if (updateCount <= 0) {
-                log.warn("更新博客评论数失败，博客ID：{}，减少数量：{}", comment.getBlogId(), deleteCount);
+                log.warn(BlogConstants.COMMENT_COUNT_UPDATE_FAIL_WITH_DELTA, comment.getBlogId(), deleteCount);
             }
 
             return Result.ok();
@@ -247,6 +267,11 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
     public Result deleteCommentByIds(List<Long> ids) {
         if (CollUtil.isEmpty(ids)) {
             return Result.fail(BlogConstants.COMMENT_ID_LIST_NOT_NULL);
+        }
+
+        UserDTO currentUser = UserHolder.getUser();
+        if (currentUser == null) {
+            return Result.fail(BlogConstants.USER_NOT_LOGIN);
         }
 
         Set<Long> distinctIds = ids.stream()
@@ -263,6 +288,10 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
             BlogComments comment = getById(id);
             if (comment == null) {
                 return Result.fail(BlogConstants.COMMENT_NOT_EXIST + "，评论ID：" + id);
+            }
+
+            if (!comment.getUserId().equals(currentUser.getId())) {
+                return Result.fail(BlogConstants.COMMENT_NOT_OWNER + "，评论ID：" + id);
             }
 
             Set<Long> childIds = collectAllChildComments(id);
@@ -283,7 +312,7 @@ public class BlogCommentsServiceImpl extends ServiceImpl<BlogCommentsMapper, Blo
 
                 int updateCount = blogMapper.decrementComments(blogId, count.intValue());
                 if (updateCount <= 0) {
-                    log.warn("更新博客评论数失败，博客ID：{}，减少数量：{}", blogId, count);
+                    log.warn(BlogConstants.COMMENT_COUNT_UPDATE_FAIL_WITH_DELTA, blogId, count);
                 }
             }
 
