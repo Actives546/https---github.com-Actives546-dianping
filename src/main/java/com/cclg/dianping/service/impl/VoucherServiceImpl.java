@@ -10,6 +10,8 @@ import com.cclg.dianping.domain.SeckillVoucher;
 import com.cclg.dianping.domain.Shop;
 import com.cclg.dianping.domain.Voucher;
 import com.cclg.dianping.dto.Result;
+import com.cclg.dianping.handler.VoucherHandler;
+import com.cclg.dianping.handler.VoucherHandlerFactory;
 import com.cclg.dianping.mapper.VoucherMapper;
 import com.cclg.dianping.service.ISeckillVoucherService;
 import com.cclg.dianping.service.IShopService;
@@ -39,7 +41,7 @@ import static com.cclg.dianping.utils.RedisConstants.CACHE_VOUCHER_TTL_MINUTES;
 /**
  * 优惠券服务实现类
  * 实现优惠券相关的业务逻辑
- * 支持普通券和秒杀券两种类型
+ * 使用策略模式处理不同类型的优惠券
  *
  * @author system
  */
@@ -72,18 +74,21 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
     private ObjectMapper objectMapper;
 
     /**
+     * 优惠券处理器工厂
+     * 用于根据类型获取对应的处理器
+     */
+    @Resource
+    private VoucherHandlerFactory voucherHandlerFactory;
+
+    /**
      * 新增优惠券
      * 业务逻辑：
-     * 1. 校验优惠券信息不能为空
-     * 2. 校验优惠券标题不能为空
-     * 3. 校验商铺ID不能为空
-     * 4. 校验商铺是否存在
-     * 5. 校验支付金额和抵扣金额
-     * 6. 校验优惠券类型
-     * 7. 如果是秒杀券，校验秒杀券信息
-     * 8. 设置创建时间和更新时间
-     * 9. 保存优惠券基本信息
-     * 10. 如果是秒杀券，保存秒杀券信息
+     * 1. 校验通用参数（标题、商铺、金额等）
+     * 2. 校验优惠券类型
+     * 3. 获取对应类型的处理器
+     * 4. 使用处理器进行类型特定的校验
+     * 5. 保存优惠券基本信息
+     * 6. 使用处理器执行类型特定的后续操作
      *
      * @param voucher 优惠券信息
      * @return 操作结果，成功返回优惠券ID
@@ -91,128 +96,105 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result saveVoucher(Voucher voucher) {
-        // ========== 1. 校验优惠券信息不能为空 ==========
-        if (voucher == null) {
-            return Result.fail(VoucherConstants.VOUCHER_INFO_NOT_NULL);
+        // ========== 1. 校验通用参数 ==========
+        String validateResult = validateCommonSaveParams(voucher);
+        if (validateResult != null) {
+            return Result.fail(validateResult);
         }
 
-        // ========== 2. 校验优惠券标题不能为空 ==========
-        if (StrUtil.isBlank(voucher.getTitle())) {
-            return Result.fail(VoucherConstants.VOUCHER_TITLE_NOT_NULL);
-        }
-
-        // ========== 3. 校验商铺ID不能为空 ==========
-        if (voucher.getShopId() == null) {
-            return Result.fail(VoucherConstants.SHOP_ID_NOT_NULL);
-        }
-
-        // ========== 4. 校验商铺是否存在 ==========
-        if (!checkShopExist(voucher.getShopId())) {
-            return Result.fail(VoucherConstants.SHOP_NOT_EXIST);
-        }
-
-        // ========== 5. 校验支付金额和抵扣金额 ==========
-        // 校验支付金额
-        if (voucher.getPayValue() == null) {
-            return Result.fail(VoucherConstants.PAY_VALUE_NOT_NULL);
-        }
-        if (voucher.getPayValue() <= 0) {
-            return Result.fail(VoucherConstants.PAY_VALUE_MUST_POSITIVE);
-        }
-
-        // 校验抵扣金额
-        if (voucher.getActualValue() == null) {
-            return Result.fail(VoucherConstants.ACTUAL_VALUE_NOT_NULL);
-        }
-        if (voucher.getActualValue() <= 0) {
-            return Result.fail(VoucherConstants.ACTUAL_VALUE_MUST_POSITIVE);
-        }
-
-        // ========== 6. 校验优惠券类型 ==========
+        // ========== 2. 处理优惠券类型 ==========
         Integer type = voucher.getType();
         if (type == null) {
             // 默认为普通券
             type = VoucherConstants.VOUCHER_TYPE_NORMAL;
             voucher.setType(type);
-        } else if (!VoucherConstants.VOUCHER_TYPE_NORMAL.equals(type)
-                && !VoucherConstants.VOUCHER_TYPE_SECKILL.equals(type)) {
+        }
+
+        // ========== 3. 获取对应类型的处理器 ==========
+        VoucherHandler handler = voucherHandlerFactory.getHandler(type);
+        if (handler == null) {
             return Result.fail(VoucherConstants.VOUCHER_TYPE_ERROR);
         }
 
-        // ========== 7. 如果是秒杀券，校验秒杀券信息 ==========
-        SeckillVoucher seckillVoucher = null;
-        if (VoucherConstants.VOUCHER_TYPE_SECKILL.equals(type)) {
-            // 校验秒杀券库存
-            if (voucher.getStock() == null) {
-                return Result.fail(VoucherConstants.SECKILL_STOCK_NOT_NULL);
-            }
-            if (voucher.getStock() < 0) {
-                return Result.fail(VoucherConstants.SECKILL_STOCK_MUST_NON_NEGATIVE);
-            }
-
-            // 校验秒杀开始时间
-            if (voucher.getBeginTime() == null) {
-                return Result.fail(VoucherConstants.BEGIN_TIME_NOT_NULL);
-            }
-
-            // 校验秒杀结束时间
-            if (voucher.getEndTime() == null) {
-                return Result.fail(VoucherConstants.END_TIME_NOT_NULL);
-            }
-
-            // 校验开始时间必须早于结束时间
-            if (voucher.getBeginTime().isAfter(voucher.getEndTime())) {
-                return Result.fail(VoucherConstants.BEGIN_TIME_MUST_BEFORE_END_TIME);
-            }
-
-            // 构建秒杀券对象
-            seckillVoucher = new SeckillVoucher();
-            seckillVoucher.setStock(voucher.getStock());
-            seckillVoucher.setBeginTime(voucher.getBeginTime());
-            seckillVoucher.setEndTime(voucher.getEndTime());
+        // ========== 4. 使用处理器进行类型特定的校验 ==========
+        String typeValidateResult = handler.validateSave(voucher);
+        if (typeValidateResult != null) {
+            return Result.fail(typeValidateResult);
         }
 
-        // ========== 8. 设置创建时间和更新时间 ==========
+        // ========== 5. 保存优惠券基本信息 ==========
         LocalDateTime now = LocalDateTime.now();
         voucher.setCreateTime(now);
         voucher.setUpdateTime(now);
 
-        // ========== 9. 保存优惠券基本信息 ==========
         boolean success = save(voucher);
         if (!success) {
-            return Result.fail(VoucherConstants.VOUCHER_CREATE_FAIL);
+            log.error("保存优惠券基本信息失败，优惠券标题：{}", voucher.getTitle());
+            throw new RuntimeException(VoucherConstants.VOUCHER_CREATE_FAIL);
         }
 
-        // ========== 10. 如果是秒杀券，保存秒杀券信息 ==========
-        if (seckillVoucher != null) {
-            // 设置关联的优惠券ID
-            seckillVoucher.setVoucherId(voucher.getId());
-            seckillVoucher.setCreateTime(now);
-            seckillVoucher.setUpdateTime(now);
-
-            boolean seckillSuccess = seckillVoucherService.save(seckillVoucher);
-            if (!seckillSuccess) {
-                log.error("保存秒杀券信息失败，优惠券ID：{}", voucher.getId());
-                // 抛出异常，触发事务回滚
-                throw new RuntimeException(VoucherConstants.SECKILL_VOUCHER_CREATE_FAIL);
-            }
-        }
+        // ========== 6. 使用处理器执行类型特定的后续操作 ==========
+        handler.afterSave(voucher);
 
         log.info(VoucherConstants.VOUCHER_CREATE_SUCCESS, voucher.getId());
         return Result.ok(voucher.getId());
     }
 
     /**
+     * 校验新增优惠券的通用参数
+     *
+     * @param voucher 优惠券信息
+     * @return 校验结果，成功返回null，失败返回错误信息
+     */
+    private String validateCommonSaveParams(Voucher voucher) {
+        // 校验优惠券信息不能为空
+        if (voucher == null) {
+            return VoucherConstants.VOUCHER_INFO_NOT_NULL;
+        }
+
+        // 校验优惠券标题不能为空
+        if (StrUtil.isBlank(voucher.getTitle())) {
+            return VoucherConstants.VOUCHER_TITLE_NOT_NULL;
+        }
+
+        // 校验商铺ID不能为空
+        if (voucher.getShopId() == null) {
+            return VoucherConstants.SHOP_ID_NOT_NULL;
+        }
+
+        // 校验商铺是否存在
+        if (!checkShopExist(voucher.getShopId())) {
+            return VoucherConstants.SHOP_NOT_EXIST;
+        }
+
+        // 校验支付金额
+        if (voucher.getPayValue() == null) {
+            return VoucherConstants.PAY_VALUE_NOT_NULL;
+        }
+        if (voucher.getPayValue() <= 0) {
+            return VoucherConstants.PAY_VALUE_MUST_POSITIVE;
+        }
+
+        // 校验抵扣金额
+        if (voucher.getActualValue() == null) {
+            return VoucherConstants.ACTUAL_VALUE_NOT_NULL;
+        }
+        if (voucher.getActualValue() <= 0) {
+            return VoucherConstants.ACTUAL_VALUE_MUST_POSITIVE;
+        }
+
+        return null;
+    }
+
+    /**
      * 更新优惠券
-     * 业务逻辑：
-     * 1. 校验优惠券ID不能为空
-     * 2. 校验优惠券是否存在
-     * 3. 校验商铺是否存在（如果传入了shopId）
-     * 4. 校验支付金额和抵扣金额（如果传入了）
-     * 5. 校验优惠券类型（如果传入了）
-     * 6. 设置更新时间
-     * 7. 更新优惠券基本信息
-     * 8. 如果是秒杀券，更新秒杀券信息
+     * 业务逻辑（修复事务回滚问题：先校验所有参数，再执行数据库操作）：
+     * 1. 校验通用参数（ID是否存在等）
+     * 2. 确定要使用的优惠券类型
+     * 3. 获取对应类型的处理器
+     * 4. 使用处理器进行类型特定的校验（关键：在校验阶段就处理库存、时间等校验）
+     * 5. 更新优惠券基本信息
+     * 6. 使用处理器执行类型特定的后续操作
      *
      * @param voucher 优惠券信息
      * @return 操作结果
@@ -220,123 +202,89 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result updateVoucher(Voucher voucher) {
-        // ========== 1. 校验优惠券ID不能为空 ==========
-        if (voucher == null || voucher.getId() == null) {
-            return Result.fail(VoucherConstants.VOUCHER_ID_NOT_NULL);
+        // ========== 1. 校验通用参数 ==========
+        String validateResult = validateCommonUpdateParams(voucher);
+        if (validateResult != null) {
+            return Result.fail(validateResult);
         }
 
-        // ========== 2. 校验优惠券是否存在 ==========
+        // 查询已存在的优惠券信息
         Voucher existVoucher = getById(voucher.getId());
         if (existVoucher == null) {
             return Result.fail(VoucherConstants.VOUCHER_NOT_EXIST);
         }
 
-        // ========== 3. 校验商铺是否存在（如果传入了shopId） ==========
-        if (voucher.getShopId() != null && !checkShopExist(voucher.getShopId())) {
-            return Result.fail(VoucherConstants.SHOP_NOT_EXIST);
-        }
+        // ========== 2. 确定要使用的优惠券类型 ==========
+        // 如果传入了type，使用传入的type；否则使用已存在的type
+        Integer targetType = voucher.getType() != null ? voucher.getType() : existVoucher.getType();
 
-        // ========== 4. 校验支付金额和抵扣金额（如果传入了） ==========
-        // 校验支付金额
-        if (voucher.getPayValue() != null) {
-            if (voucher.getPayValue() <= 0) {
-                return Result.fail(VoucherConstants.PAY_VALUE_MUST_POSITIVE);
-            }
-        }
-
-        // 校验抵扣金额
-        if (voucher.getActualValue() != null) {
-            if (voucher.getActualValue() <= 0) {
-                return Result.fail(VoucherConstants.ACTUAL_VALUE_MUST_POSITIVE);
-            }
-        }
-
-        // ========== 5. 校验优惠券类型（如果传入了） ==========
-        Integer type = voucher.getType();
-        if (type != null && !VoucherConstants.VOUCHER_TYPE_NORMAL.equals(type)
-                && !VoucherConstants.VOUCHER_TYPE_SECKILL.equals(type)) {
+        // ========== 3. 获取对应类型的处理器 ==========
+        VoucherHandler handler = voucherHandlerFactory.getHandler(targetType);
+        if (handler == null) {
             return Result.fail(VoucherConstants.VOUCHER_TYPE_ERROR);
         }
 
-        // ========== 6. 设置更新时间 ==========
+        // ========== 4. 使用处理器进行类型特定的校验 ==========
+        // 关键修复：在执行数据库操作之前，先进行所有类型特定的校验
+        // 包括：库存不能为负数、时间逻辑等
+        String typeValidateResult = handler.validateUpdate(voucher, existVoucher);
+        if (typeValidateResult != null) {
+            return Result.fail(typeValidateResult);
+        }
+
+        // ========== 5. 更新优惠券基本信息 ==========
         voucher.setUpdateTime(LocalDateTime.now());
 
-        // ========== 7. 更新优惠券基本信息 ==========
         boolean success = updateById(voucher);
         if (!success) {
-            return Result.fail(VoucherConstants.VOUCHER_UPDATE_FAIL);
+            log.error("更新优惠券基本信息失败，优惠券ID：{}", voucher.getId());
+            throw new RuntimeException(VoucherConstants.VOUCHER_UPDATE_FAIL);
         }
 
-        // ========== 8. 如果是秒杀券，更新秒杀券信息 ==========
-        // 判断当前优惠券是否是秒杀券
-        Integer currentType = type != null ? type : existVoucher.getType();
-        if (VoucherConstants.VOUCHER_TYPE_SECKILL.equals(currentType)) {
-            // 检查是否传入了秒杀券相关字段
-            if (voucher.getStock() != null || voucher.getBeginTime() != null
-                    || voucher.getEndTime() != null) {
-                // 查询现有的秒杀券信息
-                SeckillVoucher existSeckillVoucher = seckillVoucherService.getById(voucher.getId());
-                if (existSeckillVoucher == null) {
-                    // 如果不存在秒杀券信息，需要创建
-                    SeckillVoucher newSeckillVoucher = new SeckillVoucher();
-                    newSeckillVoucher.setVoucherId(voucher.getId());
-                    // 使用传入的值，如果没有则使用默认值
-                    newSeckillVoucher.setStock(voucher.getStock() != null ? voucher.getStock() : 0);
-                    newSeckillVoucher.setBeginTime(voucher.getBeginTime() != null ? voucher.getBeginTime() : LocalDateTime.now());
-                    newSeckillVoucher.setEndTime(voucher.getEndTime() != null ? voucher.getEndTime() : LocalDateTime.now().plusDays(7));
-                    newSeckillVoucher.setCreateTime(LocalDateTime.now());
-                    newSeckillVoucher.setUpdateTime(LocalDateTime.now());
-
-                    // 校验开始时间必须早于结束时间
-                    if (newSeckillVoucher.getBeginTime().isAfter(newSeckillVoucher.getEndTime())) {
-                        return Result.fail(VoucherConstants.BEGIN_TIME_MUST_BEFORE_END_TIME);
-                    }
-
-                    boolean seckillSuccess = seckillVoucherService.save(newSeckillVoucher);
-                    if (!seckillSuccess) {
-                        log.error("创建秒杀券信息失败，优惠券ID：{}", voucher.getId());
-                        throw new RuntimeException(VoucherConstants.SECKILL_VOUCHER_CREATE_FAIL);
-                    }
-                } else {
-                    // 如果已存在，更新秒杀券信息
-                    SeckillVoucher updateSeckillVoucher = new SeckillVoucher();
-                    updateSeckillVoucher.setVoucherId(voucher.getId());
-                    // 只更新传入的字段
-                    if (voucher.getStock() != null) {
-                        updateSeckillVoucher.setStock(voucher.getStock());
-                    }
-                    if (voucher.getBeginTime() != null) {
-                        updateSeckillVoucher.setBeginTime(voucher.getBeginTime());
-                    }
-                    if (voucher.getEndTime() != null) {
-                        updateSeckillVoucher.setEndTime(voucher.getEndTime());
-                    }
-                    updateSeckillVoucher.setUpdateTime(LocalDateTime.now());
-
-                    // 校验开始时间必须早于结束时间（如果都传入了）
-                    LocalDateTime beginTime = updateSeckillVoucher.getBeginTime() != null
-                            ? updateSeckillVoucher.getBeginTime() : existSeckillVoucher.getBeginTime();
-                    LocalDateTime endTime = updateSeckillVoucher.getEndTime() != null
-                            ? updateSeckillVoucher.getEndTime() : existSeckillVoucher.getEndTime();
-                    if (beginTime.isAfter(endTime)) {
-                        return Result.fail(VoucherConstants.BEGIN_TIME_MUST_BEFORE_END_TIME);
-                    }
-
-                    boolean seckillSuccess = seckillVoucherService.updateById(updateSeckillVoucher);
-                    if (!seckillSuccess) {
-                        log.error("更新秒杀券信息失败，优惠券ID：{}", voucher.getId());
-                        throw new RuntimeException(VoucherConstants.SECKILL_VOUCHER_UPDATE_FAIL);
-                    }
-                }
-            }
-        }
+        // ========== 6. 使用处理器执行类型特定的后续操作 ==========
+        handler.afterUpdate(voucher, existVoucher);
 
         log.info(VoucherConstants.VOUCHER_UPDATE_SUCCESS, voucher.getId());
 
-        // ========== 9. 删除缓存，保证一致性 ==========
+        // ========== 7. 删除缓存，保证一致性 ==========
         deleteVoucherCache(voucher.getId());
 
         return Result.ok();
+    }
+
+    /**
+     * 校验更新优惠券的通用参数
+     *
+     * @param voucher 优惠券信息
+     * @return 校验结果，成功返回null，失败返回错误信息
+     */
+    private String validateCommonUpdateParams(Voucher voucher) {
+        // 校验优惠券ID不能为空
+        if (voucher == null || voucher.getId() == null) {
+            return VoucherConstants.VOUCHER_ID_NOT_NULL;
+        }
+
+        // 校验商铺是否存在（如果传入了shopId）
+        if (voucher.getShopId() != null && !checkShopExist(voucher.getShopId())) {
+            return VoucherConstants.SHOP_NOT_EXIST;
+        }
+
+        // 校验支付金额（如果传入了）
+        if (voucher.getPayValue() != null && voucher.getPayValue() <= 0) {
+            return VoucherConstants.PAY_VALUE_MUST_POSITIVE;
+        }
+
+        // 校验抵扣金额（如果传入了）
+        if (voucher.getActualValue() != null && voucher.getActualValue() <= 0) {
+            return VoucherConstants.ACTUAL_VALUE_MUST_POSITIVE;
+        }
+
+        // 校验优惠券类型（如果传入了）
+        if (voucher.getType() != null && !voucherHandlerFactory.supports(voucher.getType())) {
+            return VoucherConstants.VOUCHER_TYPE_ERROR;
+        }
+
+        return null;
     }
 
     /**
@@ -521,7 +469,8 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
         // ========== 4. 执行删除操作 ==========
         boolean success = removeById(id);
         if (!success) {
-            return Result.fail(VoucherConstants.VOUCHER_DELETE_FAIL);
+            log.error("删除优惠券基本信息失败，优惠券ID：{}", id);
+            throw new RuntimeException(VoucherConstants.VOUCHER_DELETE_FAIL);
         }
 
         log.info(VoucherConstants.VOUCHER_DELETE_SUCCESS, id);
@@ -596,7 +545,8 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
         // 使用MyBatis-Plus的removeByIds方法进行批量删除
         boolean success = removeByIds(distinctIds);
         if (!success) {
-            return Result.fail(VoucherConstants.VOUCHER_BATCH_DELETE_FAIL);
+            log.error("批量删除优惠券基本信息失败，优惠券数量：{}", distinctIds.size());
+            throw new RuntimeException(VoucherConstants.VOUCHER_BATCH_DELETE_FAIL);
         }
 
         log.info(VoucherConstants.VOUCHER_BATCH_DELETE_SUCCESS, distinctIds.size());
