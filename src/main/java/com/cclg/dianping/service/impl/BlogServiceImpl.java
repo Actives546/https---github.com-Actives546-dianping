@@ -69,26 +69,26 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         }
 
         if (blog.getUserId() == null) {
-            return Result.fail("用户ID不能为空");
+            return Result.fail(BlogConstants.USER_ID_NOT_NULL);
         }
 
         User user = userService.getById(blog.getUserId());
         if (user == null) {
-            return Result.fail("用户不存在");
+            return Result.fail(BlogConstants.USER_NOT_EXIST);
         }
 
         if (StrUtil.isNotBlank(blog.getImages())) {
             String[] images = blog.getImages().split(BlogConstants.IMAGES_SEPARATOR);
             if (images.length > BlogConstants.MAX_IMAGES_COUNT) {
-                return Result.fail("图片数量不能超过" + BlogConstants.MAX_IMAGES_COUNT + "张");
+                return Result.fail(BlogConstants.IMAGES_COUNT_EXCEED);
             }
         }
 
         if (blog.getLiked() == null) {
-            blog.setLiked(0);
+            blog.setLiked(BlogConstants.DEFAULT_LIKED);
         }
         if (blog.getComments() == null) {
-            blog.setComments(0);
+            blog.setComments(BlogConstants.DEFAULT_COMMENTS);
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -141,7 +141,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         if (StrUtil.isNotBlank(blog.getImages())) {
             String[] images = blog.getImages().split(BlogConstants.IMAGES_SEPARATOR);
             if (images.length > BlogConstants.MAX_IMAGES_COUNT) {
-                return Result.fail("图片数量不能超过" + BlogConstants.MAX_IMAGES_COUNT + "张");
+                return Result.fail(BlogConstants.IMAGES_COUNT_EXCEED);
             }
         }
 

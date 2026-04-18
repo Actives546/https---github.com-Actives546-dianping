@@ -2075,7 +2075,7 @@ DELETE /blog/1
 | answerId | Long | 否 | 回复的评论ID，回复评论时使用 |
 | content | String | 是 | 评论内容 |
 | liked | Integer | 否 | 点赞数量，默认0 |
-| status | Boolean | 否 | 状态，默认false（0-正常） |
+| status | Boolean | 否 | 状态，默认true（正常），false（被举报/禁止查看） |
 
 **请求示例1 - 新增一级评论：**
 ```json
@@ -2137,6 +2137,11 @@ DELETE /blog/1
 
 **接口说明：** 更新评论信息，只有传入的字段会被更新。通常用于更新评论内容或点赞数。
 
+**权限校验说明：**
+- 用户必须已登录
+- 只能更新自己发布的评论
+- 校验评论的 `userId` 是否等于当前登录用户的ID
+
 **请求参数：** (RequestBody - JSON)
 
 | 参数名 | 类型 | 必填 | 说明 |
@@ -2165,11 +2170,31 @@ DELETE /blog/1
 }
 ```
 
-**错误返回示例 - 评论不存在：**
+**错误返回示例1 - 评论不存在：**
 ```json
 {
   "success": false,
   "errorMsg": "评论不存在",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例2 - 用户未登录：**
+```json
+{
+  "success": false,
+  "errorMsg": "用户未登录",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例3 - 无权操作：**
+```json
+{
+  "success": false,
+  "errorMsg": "无权操作该评论",
   "data": null,
   "total": null
 }
@@ -2388,6 +2413,11 @@ GET /blog/comment/blog/1?current=2&size=20
 
 **接口说明：** 根据ID删除单个评论，会级联删除所有子评论（回复评论）。
 
+**权限校验说明：**
+- 用户必须已登录
+- 只能删除自己发布的评论
+- 校验评论的 `userId` 是否等于当前登录用户的ID
+
 **级联删除说明：**
 - 当删除父评论时，会自动递归删除所有子评论
 - 使用广度优先搜索（BFS）算法收集所有需要删除的子评论ID
@@ -2416,11 +2446,31 @@ DELETE /blog/comment/1
 }
 ```
 
-**错误返回：**
+**错误返回示例1 - 评论不存在：**
 ```json
 {
   "success": false,
   "errorMsg": "评论不存在",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例2 - 用户未登录：**
+```json
+{
+  "success": false,
+  "errorMsg": "用户未登录",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例3 - 无权操作：**
+```json
+{
+  "success": false,
+  "errorMsg": "无权操作该评论",
   "data": null,
   "total": null
 }
@@ -2433,6 +2483,12 @@ DELETE /blog/comment/1
 **接口路径：** `DELETE /blog/comment/batch`
 
 **接口说明：** 批量删除多个评论。会校验所有ID是否都存在，如果有不存在的ID会返回错误。
+
+**权限校验说明：**
+- 用户必须已登录
+- 只能删除自己发布的评论
+- 所有传入的评论ID都必须属于当前登录用户
+- 只要有一个评论不属于当前用户，操作就会失败
 
 **级联删除说明：**
 - 删除的每个评论都会级联删除其所有子评论
@@ -2462,11 +2518,31 @@ DELETE /blog/comment/1
 }
 ```
 
-**错误返回示例：**
+**错误返回示例1 - 评论不存在：**
 ```json
 {
   "success": false,
   "errorMsg": "评论不存在，评论ID：999",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例2 - 用户未登录：**
+```json
+{
+  "success": false,
+  "errorMsg": "用户未登录",
+  "data": null,
+  "total": null
+}
+```
+
+**错误返回示例3 - 无权操作：**
+```json
+{
+  "success": false,
+  "errorMsg": "无权操作该评论，评论ID：5",
   "data": null,
   "total": null
 }
@@ -2505,7 +2581,7 @@ DELETE /blog/comment/1
 | answerId | Long | answer_id | 回复的评论ID |
 | content | String | content | 评论内容 |
 | liked | Integer | liked | 点赞数量 |
-| status | Boolean | status | 状态，false-正常，true-被举报/禁止查看 |
+| status | Boolean | status | 状态，true-正常，false-被举报/禁止查看 |
 | createTime | LocalDateTime | create_time | 创建时间 |
 | updateTime | LocalDateTime | update_time | 更新时间 |
 
@@ -2523,6 +2599,16 @@ DELETE /blog/comment/1
 | MAX_IMAGES_COUNT | 9 | 博客最多图片数量 |
 | IMAGES_SEPARATOR | "," | 图片分隔符 |
 
+### 博客相关常量（续）
+
+| 常量名 | 值 | 说明 |
+|--------|-----|------|
+| DEFAULT_LIKED | 0 | 默认点赞数 |
+| DEFAULT_COMMENTS | 0 | 默认评论数 |
+| USER_ID_NOT_NULL | "用户ID不能为空" | 用户ID不能为空 |
+| USER_NOT_EXIST | "用户不存在" | 用户不存在 |
+| IMAGES_COUNT_EXCEED | "图片数量不能超过9张" | 图片数量超限 |
+
 ### 评论相关常量
 
 | 常量名 | 值 | 说明 |
@@ -2531,6 +2617,16 @@ DELETE /blog/comment/1
 | COMMENT_CONTENT_NOT_NULL | "评论内容不能为空" | 评论内容不能为空 |
 | COMMENT_ID_NOT_NULL | "评论ID不能为空" | 评论ID不能为空 |
 | COMMENT_NOT_EXIST | "评论不存在" | 评论不存在 |
+| COMMENT_ID_LIST_NOT_NULL | "评论ID列表不能为空" | 评论ID列表不能为空 |
 | COMMENT_BLOG_ID_NOT_NULL | "评论关联的博客ID不能为空" | 博客ID不能为空 |
 | COMMENT_PARENT_NOT_EXIST | "父评论不存在" | 父评论不存在 |
 | COMMENT_ANSWER_NOT_EXIST | "回复的评论不存在" | 回复的评论不存在 |
+| COMMENT_PARENT_NOT_IN_BLOG | "父评论不属于当前博客" | 父评论不属于当前博客 |
+| COMMENT_ANSWER_NOT_IN_BLOG | "回复的评论不属于当前博客" | 回复的评论不属于当前博客 |
+| COMMENT_ANSWER_NOT_IN_PARENT | "回复的评论不属于当前父评论" | 回复的评论不属于当前父评论 |
+| COMMENT_NOT_OWNER | "无权操作该评论" | 无权操作该评论 |
+| USER_NOT_LOGIN | "用户未登录" | 用户未登录 |
+| DEFAULT_PARENT_ID | 0 | 默认父评论ID（一级评论） |
+| COMMENT_STATUS_NORMAL | true | 评论状态-正常 |
+| COMMENT_STATUS_BLOCKED | false | 评论状态-被举报/禁止查看 |
+| DELTA_ONE | 1 | 变化量1 |
