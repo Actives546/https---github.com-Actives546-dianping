@@ -87,7 +87,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             return Result.ok(FollowConstants.FOLLOW_SUCCESS);
         }
 
-        return Result.fail(FollowConstants.FOLLOW_FAIL);
+        throw new RuntimeException(FollowConstants.FOLLOW_FAIL);
     }
 
     /**
@@ -125,7 +125,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             return Result.ok(FollowConstants.UNFOLLOW_SUCCESS);
         }
 
-        return Result.fail(FollowConstants.UNFOLLOW_FAIL);
+        throw new RuntimeException(FollowConstants.UNFOLLOW_FAIL);
     }
 
     /**
@@ -146,6 +146,10 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         }
 
         Long userId = currentUser.getId();
+
+        if (userId.equals(followUserId)) {
+            return Result.ok(false);
+        }
 
         LambdaQueryWrapper<Follow> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(Follow::getUserId, userId)
