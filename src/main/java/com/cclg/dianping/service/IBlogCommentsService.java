@@ -51,12 +51,14 @@ public interface IBlogCommentsService extends IService<BlogComments> {
     Result queryCommentPage(Integer current, Integer size, Long blogId, Long userId);
 
     /**
-     * 根据博客ID查询评论列表
+     * 根据博客ID查询评论列表（分页）
      *
-     * @param blogId 博客ID
-     * @return 评论列表
+     * @param blogId  博客ID
+     * @param current 当前页码
+     * @param size    每页大小
+     * @return 评论列表（分页）
      */
-    Result queryCommentsByBlogId(Long blogId);
+    Result queryCommentsByBlogId(Long blogId, Integer current, Integer size);
 
     /**
      * 根据ID删除评论
